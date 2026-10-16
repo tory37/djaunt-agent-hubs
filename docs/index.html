@@ -117,6 +117,7 @@ section.block { padding-block: var(--dj-space-9) 0; scroll-margin-top: 56px; }
 .head { display: grid; gap: var(--dj-space-3); margin-bottom: var(--dj-space-6); }
 .head h2 { font-size: clamp(1.75rem, 1.2rem + 2vw, 3rem); max-width: 22ch; }
 .head p { color: var(--dj-text-muted); max-width: 60ch; }
+.head .cta { margin-top: var(--dj-space-3); }
 
 /* bento */
 .bento { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--dj-border); border: 1px solid var(--dj-border); }
@@ -212,6 +213,7 @@ footer .links { display: flex; gap: var(--dj-space-5); }
       <a href="#events">Events</a>
       <a href="#services">Services</a>
       <a href="#agents">Agents</a>
+      <a href="https://github.com/tory37/djaunt-agent-hubs">GitHub</a>
     </nav>
     <a class="btn btn-sm" href="#install">Install</a>
   </div>
@@ -472,15 +474,21 @@ footer .links { display: flex; gap: var(--dj-space-5); }
       <p class="eyebrow">Install</p>
       <h2>Build it, run it under launchd, open a page.</h2>
       <p>Needs Go. Binds to 127.0.0.1 only and keeps its data in <code>~/.local/share/djt-hub/</code>.</p>
+      <div class="cta">
+        <a class="btn btn-primary" href="https://github.com/tory37/djaunt-agent-hubs">View on GitHub</a>
+        <a class="btn" href="https://github.com/tory37/djaunt-agent-hubs/blob/main/docs/agent-guide.md">Read the agent guide</a>
+      </div>
     </div>
 
     <div class="split">
       <div class="term">
         <header><span>macOS</span><button class="copy" type="button" data-copy="inst">Copy</button></header>
-<pre id="inst"><span class="p">$ </span>brew install go
-<span class="p">$ </span>./install.sh              <span class="c"># builds ~/.local/bin/djt-hub, runs it under launchd</span>
+<pre id="inst"><span class="p">$ </span>git clone https://github.com/tory37/djaunt-agent-hubs.git
+<span class="p">$ </span>cd djaunt-agent-hubs
+<span class="p">$ </span>brew install go
+<span class="p">$ </span>./install.sh        <span class="c"># build + launchd</span>
 <span class="p">$ </span>djt-hub status
-<span class="p">$ </span>djt-hub docs               <span class="c"># the agent guide</span>
+<span class="p">$ </span>djt-hub docs        <span class="c"># the agent guide</span>
 <span class="p">$ </span>examples/release-runbook.sh</pre>
       </div>
       <ul class="points">
