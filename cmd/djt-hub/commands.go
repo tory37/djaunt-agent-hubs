@@ -20,6 +20,7 @@ import (
 	"github.com/tory37/djaunt-agent-hubs/internal/client"
 	"github.com/tory37/djaunt-agent-hubs/internal/server"
 	"github.com/tory37/djaunt-agent-hubs/internal/store"
+	"github.com/tory37/djaunt-agent-hubs/web"
 )
 
 const (
@@ -44,7 +45,7 @@ func runServe(ctx context.Context, args []string) error {
 	}
 	defer hubStore.Close()
 
-	hubServer := server.New(hubStore, nil)
+	hubServer := server.New(hubStore, web.Handler())
 	listener, err := net.Listen("tcp", *address)
 	if err != nil {
 		return err
