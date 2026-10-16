@@ -168,6 +168,7 @@ last one disconnects, so a click between two `wait` calls stays yours. `show` re
 ## Daemon agents
 
 A daemon agent is Claude on call for a hub. It answers events while no session listens.
+Prefer a service or a plain `--on` trigger. Add an agent only when the event needs judgment.
 
 ```sh
 djt-hub agent add release-42 oncall --on gate.approve --match step=promote \
