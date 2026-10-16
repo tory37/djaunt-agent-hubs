@@ -56,12 +56,7 @@ func runServiceAdd(ctx context.Context, args []string) error {
 	if len(positionals) < 2 {
 		return fmt.Errorf("%w: svc add <hub> <name> [--every D|--cron EXPR|--on TYPE [--match k=v]... [--unattached]] [--restart P] [--cwd DIR] [--env K=V]... -- <command>", errUsage)
 	}
-	if workdir == "" {
-		workdir, err = os.Getwd()
-	} else {
-		workdir, err = filepath.Abs(workdir)
-	}
-	if err != nil {
+	if workdir, err = resolveWorkdir(workdir); err != nil {
 		return err
 	}
 	env := map[string]string{}
@@ -85,6 +80,13 @@ func runServiceAdd(ctx context.Context, args []string) error {
 		"unattached": unattached,
 	}
 	return doAndPrint(ctx, http.MethodPost, client.HubPath(hubID, "services"), request)
+}
+
+func resolveWorkdir(workdir string) (string, error) {
+	if workdir == "" {
+		return os.Getwd()
+	}
+	return filepath.Abs(workdir)
 }
 
 // shellCommand keeps a single argument as a shell script and quotes several

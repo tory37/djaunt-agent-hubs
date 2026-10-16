@@ -41,6 +41,9 @@ func runServe(ctx context.Context, args []string) error {
 		return err
 	}
 
+	// Services inherit the data directory, so `agent run` finds its sessions.
+	os.Setenv(envDataDir, *dataDirectory)
+
 	hubStore, err := store.Open(filepath.Join(*dataDirectory, "hub.db"))
 	if err != nil {
 		return err

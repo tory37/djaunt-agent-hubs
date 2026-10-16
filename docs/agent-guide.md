@@ -95,6 +95,7 @@ An event is `{"seq", "hub", "source", "type", "payload", "ts"}`. `source` is
 | `checklist.toggle` | `{block, item, done}` |
 | `svc.started` / `svc.exited` / `svc.failed` | `{pid}` / `{code, duration_ms}` / `{code, duration_ms}` or `{error}`; triggers add `seq` |
 | `svc.dropped` | `{seq}`: a trigger's queue passed 100 events and dropped the oldest |
+| `agent.done` / `agent.failed` | `{seq, cost_usd, turns}` / `{seq, error}`: a daemon agent finished event `seq` |
 
 html blocks and `emit <hub> <type> [json]` can add any type.
 
@@ -163,6 +164,26 @@ djt-hub svc add release-42 on-reject --on gate.reject --match step=promote -- ./
 `wait` and `events --follow` mark the hub as attached. It stays attached for 2m after the
 last one disconnects, so a click between two `wait` calls stays yours. `show` reports
 `attached`. Browser tabs and services never attach a hub.
+
+## Daemon agents
+
+A daemon agent is Claude on call for a hub. It answers events while no session listens.
+
+```sh
+djt-hub agent add release-42 oncall --on gate.approve --match step=promote \
+  --prompt "Run the promote step, then mark it done" --allow "Bash(./promote.sh)"
+djt-hub agent ls release-42
+djt-hub agent reset release-42 oncall    # forget its session
+djt-hub agent rm release-42 oncall
+```
+
+- It is an `--unattached` trigger that runs `claude -p`. Your `wait` or `follow` keeps it quiet.
+- Each run gets your `--prompt`, the event, and the hub's blocks and state. It also gets this guide.
+- Default tools: `Read`, `Grep`, `Glob`, `Bash(djt-hub:*)`. `--allow TOOL` adds one, repeatable.
+- Runs resume one Claude session, so the agent remembers earlier events. `agent reset` starts fresh.
+- `--budget` caps each run in USD (default 1.00). `--timeout` kills a run (default 10m). `--model` picks the model.
+- Each run ends with `agent.done` (with cost) or `agent.failed`. Claude's reply goes to `svc logs`.
+- Hand off before you exit: add the agent, tell it what is left in `--prompt`, then stop listening.
 
 ## Conventions
 

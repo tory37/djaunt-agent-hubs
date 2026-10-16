@@ -56,6 +56,14 @@ Services (supervised; survive agent exit; stopped on close)
   Services get $DJT_HUB_ID, $DJT_HUB_ADDR, $DJT_SVC, so plain
   "djt-hub patch a=1" or "djt-hub emit t" inside one targets its hub.
 
+Daemon agents (claude -p per event, only while no CLI agent listens)
+  agent add <hub> <name> --on TYPE [--match k=v]... [--prompt TEXT|@file]
+          [--allow TOOL]... [--model M] [--budget 1.00] [--timeout 10m] [--cwd DIR]
+                                       tools: Read Grep Glob Bash(djt-hub:*) + --allow
+  agent ls <hub>                       agents with state and cursor
+  agent rm <hub> <name>                remove the agent and its session
+  agent reset <hub> <name>             forget the session; the next run starts fresh
+
 Hub resolution: --hub, then $DJT_HUB_ID, then the first argument.
 Daemon address: $DJT_HUB_ADDR (default 127.0.0.1:7717).
 `
@@ -78,6 +86,7 @@ var commands = map[string]command{
 	"events":    runEvents,
 	"wait":      runWait,
 	"svc":       runService,
+	"agent":     runAgent,
 	"docs":      runDocs,
 	"install":   runInstall,
 	"uninstall": runUninstall,
