@@ -148,6 +148,26 @@ export function relativeTime(timestamp, now = Date.now()) {
   return `${Math.round(elapsed / 86_400_000)}d ago`;
 }
 
+const agentMarker = "DJT_AGENT_BUDGET";
+
+// daemonAgents picks the agent services and pairs each with its latest
+// agent.done or agent.failed event.
+export function daemonAgents(services, events) {
+  return (services ?? []).filter((service) => service.env && agentMarker in service.env).map((service) => {
+    const source = `svc:${service.name}`;
+    const last = events.findLast((event) => event.source === source && event.type.startsWith("agent.")) ?? null;
+    return { name: service.name, on: service.on, match: service.match ?? [], state: service.state, last };
+  });
+}
+
+// agentStatus says what a daemon agent does with the next matching event. An
+// attached CLI session takes events, so armed agents stand by.
+export function agentStatus(agent, attached) {
+  if (agent.state === "running" || agent.state === "starting") return "running";
+  if (agent.state === "stopped") return "off";
+  return attached ? "standby" : "armed";
+}
+
 // chartSeries normalizes the two accepted chart shapes into uPlot columns:
 // {x:[...], series:[{label, values}]} or rows [{x, a, b}] keyed by xKey.
 export function chartSeries(chartData, xKey = "x") {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { chartSeries, formatDuration, getPath, renderMarkdown, statTiles, toMillis } from "../static/lib.js";
+import { agentStatus, chartSeries, daemonAgents, formatDuration, getPath, renderMarkdown, statTiles, toMillis } from "../static/lib.js";
 
 test("getPath resolves array elements by index or id", () => {
   const state = { release: { steps: [{ id: "tag", status: "done" }, { id: "deploy", status: "running" }] } };
@@ -54,4 +54,29 @@ test("time helpers", () => {
   assert.equal(toMillis(1_700_000_000_000), 1_700_000_000_000);
   assert.equal(formatDuration(65_000), "1m05s");
   assert.equal(formatDuration(3_725_000), "1h02m");
+});
+
+test("daemonAgents keeps agent services and their latest result", () => {
+  const services = [
+    { name: "oncall", on: "gate.approve", match: ["step=promote"], state: "waiting", env: { DJT_AGENT_BUDGET: "1.00" } },
+    { name: "poller", state: "running", env: {} },
+  ];
+  const events = [
+    { seq: 1, source: "svc:oncall", type: "agent.failed", payload: { error: "x" } },
+    { seq: 2, source: "svc:other", type: "agent.done", payload: {} },
+    { seq: 3, source: "svc:oncall", type: "agent.done", payload: { cost_usd: 0.1 } },
+    { seq: 4, source: "svc:oncall", type: "svc.failed", payload: {} },
+  ];
+  const agents = daemonAgents(services, events);
+  assert.equal(agents.length, 1);
+  assert.equal(agents[0].name, "oncall");
+  assert.equal(agents[0].last.seq, 3);
+  assert.equal(daemonAgents(services, [])[0].last, null);
+});
+
+test("agentStatus stands by while a CLI session is attached", () => {
+  assert.equal(agentStatus({ state: "waiting" }, false), "armed");
+  assert.equal(agentStatus({ state: "waiting" }, true), "standby");
+  assert.equal(agentStatus({ state: "running" }, true), "running");
+  assert.equal(agentStatus({ state: "stopped" }, false), "off");
 });

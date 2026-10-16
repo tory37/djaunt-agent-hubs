@@ -74,6 +74,37 @@ code, pre, .mono { font-family: var(--mono); font-variant-numeric: tabular-nums;
 .conn.is-reconnecting::before { background: var(--accent); }
 .conn.is-offline::before { background: var(--bad); }
 
+/* Agent chip: who answers this hub's events */
+.agents { position: relative; }
+.agent-chip { display: inline-flex; align-items: stretch; height: 20px; padding: 0; border: 1px solid var(--border); border-radius: var(--radius); background: transparent; font: 500 var(--t-xs)/1 var(--mono); color: var(--text-muted); cursor: pointer; transition: border-color var(--ease); }
+.agent-chip:hover, .agent-chip[aria-expanded="true"] { border-color: var(--border-strong); }
+.agent-seg { display: inline-flex; align-items: center; gap: var(--s1); padding: 0 var(--s2); }
+.agent-seg + .agent-seg { border-left: 1px solid var(--border); }
+.agent-seg .icon, .agent-name .icon { width: 12px; height: 12px; }
+.agent-dot { width: 6px; height: 6px; border-radius: 50%; border: 1px solid var(--text-faint); }
+.agent-seg.is-attached { color: var(--text); }
+.agent-seg.is-attached .agent-dot { background: var(--ok); border-color: var(--ok); }
+.agent-seg.is-armed { color: var(--accent); }
+.agent-seg.is-running { color: var(--run); }
+.agent-seg.is-running .icon { animation: pulse 1.2s ease-in-out infinite; }
+.agent-seg.is-standby { color: var(--text-faint); }
+.agent-pop { position: absolute; top: calc(100% + var(--s2)); right: 0; width: 360px; max-width: calc(100vw - var(--s8)); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius); white-space: normal; z-index: 20; }
+.agent-pop[hidden] { display: none; }
+.agent-pop-head, .agent-pop-hint { padding: var(--s2) var(--s3); font: var(--t-xs)/1.5 var(--sans); color: var(--text-muted); }
+.agent-pop-head { border-bottom: 1px solid var(--border); }
+.agent-pop-hint code { color: var(--text); }
+.agent-row { display: grid; gap: 2px; padding: var(--s2) var(--s3); border-bottom: 1px solid var(--border); }
+.agent-line { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); min-width: 0; }
+.agent-row:last-child { border-bottom: 0; }
+.agent-name { flex: none; display: inline-flex; align-items: center; gap: var(--s1); color: var(--text); font-weight: 600; }
+.agent-status { flex: none; text-transform: uppercase; letter-spacing: 0.04em; text-align: right; }
+.agent-status.is-armed { color: var(--accent); }
+.agent-status.is-running { color: var(--run); }
+.agent-status.is-standby, .agent-status.is-off { color: var(--text-faint); }
+.agent-trigger, .agent-last { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-faint); }
+.agent-last { text-align: right; }
+.agent-last.is-failed { color: var(--bad); }
+
 /* Hub layout */
 .hub-layout { display: grid; grid-template-columns: minmax(0, 1fr) var(--rail); min-height: calc(100vh - var(--header)); }
 .hub-main { padding: var(--s4); min-width: 0; }
@@ -104,6 +135,7 @@ code, pre, .mono { font-family: var(--mono); font-variant-numeric: tabular-nums;
 .feed-item:hover { background: var(--surface); }
 .feed-line { display: flex; align-items: baseline; gap: var(--s2); font: var(--t-xs)/1.5 var(--mono); min-width: 0; }
 .feed-type { color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.feed-type.is-failed { color: var(--bad); }
 .feed-time { margin-left: auto; color: var(--text-faint); }
 .feed-payload { margin-top: 2px; font: var(--t-xs)/1.5 var(--mono); color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .feed-item.is-open .feed-payload { white-space: pre-wrap; word-break: break-word; }
@@ -248,6 +280,7 @@ textarea.input { min-height: 72px; resize: vertical; }
 .hub-row-time { text-align: right; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
+@keyframes pulse { 50% { opacity: 0.4; } }
 
 @media (max-width: 1100px) {
   .hub-layout { grid-template-columns: minmax(0, 1fr); }
@@ -257,7 +290,7 @@ textarea.input { min-height: 72px; resize: vertical; }
 }
 @media (max-width: 720px) {
   .panel[data-width] { grid-column: span 12; }
-  .topbar-id, .topbar-sep, .brand-text { display: none; }
+  .topbar-id, .topbar-sep, .brand-text, .agent-label { display: none; }
   .hub-row { grid-template-columns: 80px minmax(0, 1fr); }
   .hub-row-id, .hub-row-time { display: none; }
 }

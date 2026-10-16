@@ -1,11 +1,13 @@
 import { blockData, blockTypes } from "./blocks.js";
-import { clockTime, compactJSON, escapeHTML, formatDuration, relativeTime } from "./lib.js";
+import { agentStatus, clockTime, compactJSON, daemonAgents, escapeHTML, formatDuration, relativeTime } from "./lib.js";
 import { icon } from "./icons.js";
 
 const app = document.getElementById("app");
 const feedLimit = 300;
 const eventMemory = 1000;
 const indexRefreshMs = 5000;
+const agentRefreshMs = 5000;
+const agentRefreshDebounceMs = 300;
 const maxRetryMs = 15000;
 
 async function request(method, path, body) {
@@ -87,11 +89,47 @@ function feedItemMarkup(event) {
   return `<li class="feed-item" data-seq="${event.seq}">
     <div class="feed-line">
       <span class="source ${sourceClass}">${escapeHTML(event.source)}</span>
-      <span class="feed-type">${escapeHTML(event.type)}</span>
+      <span class="feed-type${event.type.endsWith(".failed") ? " is-failed" : ""}">${escapeHTML(event.type)}</span>
       <span class="feed-time" title="#${event.seq}">${clockTime(event.ts)}</span>
     </div>
     ${payload ? `<div class="feed-payload">${escapeHTML(payload)}</div>` : ""}
   </li>`;
+}
+
+function agentChipMarkup(agents, attached, isOpen) {
+  const statuses = agents.map((agent) => agentStatus(agent, attached));
+  const tone = statuses.includes("running") ? "running" : statuses.includes("armed") ? "armed" : "standby";
+  const agentLabel = agents.length === 1 ? escapeHTML(agents[0].name) : `${agents.length} agents`;
+  return `<button class="agent-chip" type="button" aria-haspopup="true" aria-expanded="${isOpen}" title="Who answers this hub's events">
+    <span class="agent-seg${attached ? " is-attached" : ""}"><i class="agent-dot"></i><span class="agent-label">${attached ? "attached" : "detached"}</span></span>
+    ${agents.length ? `<span class="agent-seg is-${tone}">${icon("bot")}<span class="agent-label">${agentLabel}</span></span>` : ""}
+  </button>`;
+}
+
+function agentLastRunMarkup(last) {
+  if (!last) return `<span class="agent-last">no runs yet</span>`;
+  const when = relativeTime(last.ts);
+  if (last.type === "agent.failed") {
+    const reason = escapeHTML(last.payload?.error ?? "failed");
+    return `<span class="agent-last is-failed" title="${reason}">failed · ${reason} · ${when}</span>`;
+  }
+  const cost = Number(last.payload?.cost_usd ?? 0).toFixed(2);
+  return `<span class="agent-last" title="event #${last.payload?.seq}">$${cost} · ${last.payload?.turns ?? 0} turns · ${when}</span>`;
+}
+
+function agentPanelMarkup(agents, attached) {
+  const summary = attached
+    ? "A CLI session is listening. Daemon agents stand by."
+    : agents.length ? "No CLI session. Daemon agents answer matching events." : "No CLI session and no daemon agents. Clicks wait for the next session.";
+  const rows = agents.map((agent) => {
+    const status = agentStatus(agent, attached);
+    const trigger = [agent.on, ...agent.match].join(" ");
+    return `<div class="agent-row">
+      <div class="agent-line"><span class="agent-name">${icon("bot")}${escapeHTML(agent.name)}</span>${agentLastRunMarkup(agent.last)}</div>
+      <div class="agent-line"><span class="agent-trigger" title="${escapeHTML(trigger)}">on ${escapeHTML(trigger)}</span><span class="agent-status is-${status}">${status}</span></div>
+    </div>`;
+  }).join("");
+  return `<div class="agent-pop-head">${summary}</div>${rows || `<div class="agent-pop-hint"><code>djt-hub agent add</code> puts Claude on call.</div>`}`;
 }
 
 function renderHub(hubId) {
@@ -101,7 +139,7 @@ function renderHub(hubId) {
   app.innerHTML = `${topbar(
     `<span class="topbar-sep"></span>
      <div class="topbar-title"><h1 data-title>${escapeHTML(hubId)}</h1><span class="topbar-id">${escapeHTML(hubId)}</span></div>`,
-    `<span data-status></span><span class="conn" data-conn>connecting</span><span data-seq>#0</span>`,
+    `<div class="agents" data-agents></div><span data-status></span><span class="conn" data-conn>connecting</span><span data-seq>#0</span>`,
   )}
   <div class="hub-layout">
     <main class="hub-main"><div data-banner></div><div class="grid" data-grid></div></main>
@@ -115,6 +153,8 @@ function renderHub(hubId) {
   const banner = app.querySelector("[data-banner]");
   const connection = app.querySelector("[data-conn]");
   const seqLabel = app.querySelector("[data-seq]");
+  const agentsElement = app.querySelector("[data-agents]");
+  const agentView = { attached: false, services: [], isOpen: false, refreshTimer: null, markup: "" };
 
   const isArchived = () => view.hub?.status === "archived";
   const context = () => ({
@@ -246,9 +286,55 @@ function renderHub(hubId) {
     return true;
   }
 
+  function renderAgents() {
+    const agents = daemonAgents(agentView.services, view.events);
+    const markup = `${agentChipMarkup(agents, agentView.attached, agentView.isOpen)}
+      <div class="agent-pop"${agentView.isOpen ? "" : " hidden"}>${agentPanelMarkup(agents, agentView.attached)}</div>`;
+    // Polling rerenders often; skip unchanged markup so the chip keeps focus.
+    if (markup === agentView.markup) return;
+    agentView.markup = markup;
+    agentsElement.innerHTML = markup;
+  }
+
+  async function refreshAgents() {
+    try {
+      const [snapshot, services] = await Promise.all([request("GET", hubPath), request("GET", `${hubPath}/services`)]);
+      agentView.attached = Boolean(snapshot.attached);
+      agentView.services = services ?? [];
+      renderAgents();
+    } catch { /* the connection badge already shows daemon trouble */ }
+  }
+
+  function scheduleAgentRefresh() {
+    clearTimeout(agentView.refreshTimer);
+    agentView.refreshTimer = setTimeout(refreshAgents, agentRefreshDebounceMs);
+  }
+
+  agentsElement.addEventListener("click", (clickEvent) => {
+    if (!clickEvent.target.closest(".agent-chip")) return;
+    agentView.isOpen = !agentView.isOpen;
+    renderAgents();
+  });
+  document.addEventListener("click", (clickEvent) => {
+    // composedPath, not contains: the chip's own click rerenders and detaches the target.
+    if (!agentView.isOpen || clickEvent.composedPath().includes(agentsElement)) return;
+    agentView.isOpen = false;
+    renderAgents();
+  });
+  document.addEventListener("keydown", (keyEvent) => {
+    if (keyEvent.key !== "Escape" || !agentView.isOpen) return;
+    agentView.isOpen = false;
+    renderAgents();
+    agentsElement.querySelector(".agent-chip")?.focus();
+  });
+
   function onEvent(event) {
     if (!recordEvent(event)) return;
     renderFeedCount();
+    if (event.type.startsWith("svc.") || event.type.startsWith("agent.")) {
+      renderAgents();
+      scheduleAgentRefresh();
+    }
     for (const panel of view.panels.values()) panel.instance?.onEvent?.(event);
   }
 
@@ -305,6 +391,8 @@ function renderHub(hubId) {
       renderHubMeta();
       syncBlocks(snapshot.blocks ?? []);
       renderFeedCount();
+      agentView.attached = Boolean(snapshot.attached);
+      refreshAgents();
       connect();
     } catch (error) {
       setConnection("offline");
@@ -313,6 +401,8 @@ function renderHub(hubId) {
         : `<div class="panel banner is-error">${icon("circleX")}Daemon unreachable: ${escapeHTML(error.message)}</div>`;
     }
   }
+
+  setInterval(() => { if (!document.hidden && !isArchived()) refreshAgents(); }, agentRefreshMs);
 
   setInterval(() => {
     if (document.hidden) return;
