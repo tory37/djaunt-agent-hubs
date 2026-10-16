@@ -520,3 +520,13 @@ func normalizeJSONValue(raw json.RawMessage) (json.RawMessage, error) {
 	}
 	return json.Marshal(value)
 }
+
+func (s *Store) LastEventSeq(ctx context.Context, hubID string) (int64, error) {
+	if _, err := s.GetHub(ctx, hubID); err != nil {
+		return 0, err
+	}
+	var lastSeq int64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(seq), 0) FROM events WHERE hub_id = ?`, hubID).Scan(&lastSeq)
+	return lastSeq, err
+}
