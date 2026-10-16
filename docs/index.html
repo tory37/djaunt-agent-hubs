@@ -1,0 +1,673 @@
+<!doctype html>
+<html lang="en" data-dj-theme="hoard">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>djt-hub</title>
+<meta name="description" content="A local daemon that hosts live browser pages for agents. Watch a run, click the gates, and the clicks come back as events.">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="assets/brand/favicon.svg" type="image/svg+xml">
+<link rel="preload" href="assets/brand/fonts/archivo-var.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="assets/brand/tokens.css">
+<link rel="stylesheet" href="assets/brand/fonts.css">
+<style>
+*, *::before, *::after { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--dj-bg);
+  color: var(--dj-text);
+  font-family: var(--dj-font-body);
+  font-size: var(--dj-text-base);
+  line-height: var(--dj-leading-body);
+  -webkit-font-smoothing: antialiased;
+}
+img, svg { display: block; max-width: 100%; }
+a { color: var(--dj-accent); text-underline-offset: 3px; }
+a:hover { color: var(--dj-accent-hi); }
+:focus-visible { outline: 2px solid var(--dj-accent); outline-offset: 2px; }
+code, pre, .mono { font-family: var(--dj-font-mono); }
+h1, h2, h3 { font-family: var(--dj-font-display); letter-spacing: var(--dj-tracking-display); line-height: var(--dj-leading-tight); margin: 0; font-weight: 700; }
+p { margin: 0; }
+ul, ol { margin: 0; padding: 0; list-style: none; }
+
+.skip { position: absolute; left: var(--dj-space-4); top: -100px; background: var(--dj-accent); color: var(--dj-on-accent); padding: var(--dj-space-2) var(--dj-space-3); z-index: 20; }
+.skip:focus { top: var(--dj-space-2); }
+
+.wrap { width: 100%; max-width: 1200px; margin-inline: auto; padding-inline: var(--dj-space-4); }
+@media (min-width: 720px) { .wrap { padding-inline: var(--dj-space-5); } }
+
+.eyebrow { font-family: var(--dj-font-mono); font-size: var(--dj-text-xs); letter-spacing: var(--dj-tracking-label); text-transform: uppercase; color: var(--dj-accent); }
+.muted { color: var(--dj-text-muted); }
+
+/* header */
+.bar { position: sticky; top: 0; z-index: 10; background: var(--dj-bg); border-bottom: 1px solid var(--dj-border); }
+.bar .wrap { display: flex; align-items: center; justify-content: space-between; height: 56px; gap: var(--dj-space-4); }
+.brand { display: flex; align-items: center; gap: var(--dj-space-3); color: var(--dj-text); text-decoration: none; font-family: var(--dj-font-display); font-weight: 600; letter-spacing: var(--dj-tracking-display); font-size: var(--dj-text-lg); }
+.brand img { width: 28px; height: 28px; }
+.brand:hover { color: var(--dj-text); }
+.nav { display: none; gap: var(--dj-space-5); font-size: var(--dj-text-sm); }
+.nav a { color: var(--dj-text-muted); text-decoration: none; transition: color var(--dj-dur-fast) var(--dj-ease); }
+.nav a:hover { color: var(--dj-text); }
+@media (min-width: 840px) { .nav { display: flex; } }
+
+/* buttons */
+.btn { display: inline-flex; align-items: center; gap: var(--dj-space-2); font: 500 var(--dj-text-sm)/1 var(--dj-font-body); padding: var(--dj-space-3) var(--dj-space-4); border-radius: var(--dj-radius-sm); border: 1px solid var(--dj-border); background: transparent; color: var(--dj-text); text-decoration: none; cursor: pointer; transition: background var(--dj-dur-fast) var(--dj-ease), border-color var(--dj-dur-fast) var(--dj-ease), color var(--dj-dur-fast) var(--dj-ease); }
+.btn:hover { background: var(--dj-surface-raised); border-color: var(--dj-bone-500); color: var(--dj-text); }
+.btn-primary { background: var(--dj-accent); border-color: var(--dj-accent); color: var(--dj-on-accent); }
+.btn-primary:hover { background: var(--dj-accent-hi); border-color: var(--dj-accent-hi); color: var(--dj-on-accent); }
+.btn-glow { box-shadow: var(--dj-glow); }
+.btn-sm { padding: var(--dj-space-2) var(--dj-space-3); font-size: var(--dj-text-xs); }
+
+.icon { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: square; stroke-linejoin: miter; flex: none; }
+.icon-sm { width: 16px; height: 16px; }
+
+/* hero */
+.hero { position: relative; overflow: hidden; padding-block: var(--dj-space-8) var(--dj-space-7); border-bottom: 1px solid var(--dj-border); }
+.watermark { position: absolute; right: -80px; top: -40px; width: 560px; opacity: 0.05; pointer-events: none; }
+.hero .wrap { position: relative; }
+.hero h1 { font-size: clamp(2.25rem, 1.2rem + 4.2vw, 4.5rem); max-width: 16ch; margin-top: var(--dj-space-4); }
+.hero-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--dj-space-7); margin-top: var(--dj-space-7); align-items: start; }
+@media (min-width: 1000px) { .hero-grid { grid-template-columns: 5fr 7fr; gap: var(--dj-space-8); } }
+.lede { font-size: var(--dj-text-lg); max-width: 46ch; }
+.lede + .lede { margin-top: var(--dj-space-4); color: var(--dj-text-muted); }
+.cta { display: flex; flex-wrap: wrap; gap: var(--dj-space-3); margin-top: var(--dj-space-6); }
+.facts { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--dj-border); border: 1px solid var(--dj-border); margin-top: var(--dj-space-6); }
+.facts li { background: var(--dj-surface); padding: var(--dj-space-3) var(--dj-space-4); font-family: var(--dj-font-mono); font-size: var(--dj-text-xs); color: var(--dj-text-muted); }
+.facts b { display: block; color: var(--dj-text); font-weight: 500; font-size: var(--dj-text-sm); }
+
+/* hub mock */
+.mock { border: 1px solid var(--dj-border); background: var(--dj-surface); border-radius: var(--dj-radius-sm); }
+.mock-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--dj-space-3); padding: var(--dj-space-3) var(--dj-space-4); border-bottom: 1px solid var(--dj-border); }
+.mock-bar strong { font-family: var(--dj-font-display); font-weight: 600; letter-spacing: var(--dj-tracking-display); }
+.mock-bar .id { font-family: var(--dj-font-mono); font-size: var(--dj-text-xs); color: var(--dj-text-muted); }
+.dot { width: 8px; height: 8px; border-radius: var(--dj-radius-full); background: var(--dj-success); flex: none; }
+.chip { margin-left: auto; display: inline-flex; align-items: center; gap: var(--dj-space-2); font-family: var(--dj-font-mono); font-size: var(--dj-text-xs); border: 1px solid var(--dj-border); border-radius: var(--dj-radius-sm); padding: var(--dj-space-1) var(--dj-space-2); color: var(--dj-text-muted); }
+.chip i { width: 6px; height: 6px; border-radius: var(--dj-radius-full); background: var(--dj-accent); }
+.chip.is-busy i { background: var(--dj-info); }
+.mock-body { display: grid; gap: 1px; background: var(--dj-border); }
+.panel { background: var(--dj-surface); padding: var(--dj-space-4); }
+.panel h3 { font-family: var(--dj-font-mono); font-weight: 500; font-size: var(--dj-text-xs); letter-spacing: var(--dj-tracking-label); text-transform: uppercase; color: var(--dj-text-muted); margin-bottom: var(--dj-space-3); }
+.steps li { display: grid; grid-template-columns: 20px 1fr auto; column-gap: var(--dj-space-3); align-items: center; padding-block: var(--dj-space-2); border-top: 1px solid var(--dj-border); font-size: var(--dj-text-sm); }
+.steps li:first-child { border-top: 0; }
+.steps .meta { font-family: var(--dj-font-mono); font-size: var(--dj-text-xs); color: var(--dj-text-muted); }
+.steps .st-done .icon { color: var(--dj-success); }
+.steps .st-running .icon { color: var(--dj-info); animation: spin 1.2s linear infinite; }
+.steps .st-waiting .icon { color: var(--dj-accent); }
+.steps .st-failed .icon { color: var(--dj-danger); }
+.steps .st-pending .icon, .steps .st-skipped .icon { color: var(--dj-bone-500); }
+.steps .st-pending, .steps .st-skipped { color: var(--dj-text-muted); }
+.gate { grid-column: 2 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: var(--dj-space-3); margin-top: var(--dj-space-2); padding: var(--dj-space-3); border: 1px solid var(--dj-accent-deep); background: var(--dj-surface-raised); }
+.gate p { flex: 1 1 12ch; font-weight: 500; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; background: var(--dj-border); }
+.stat { background: var(--dj-surface); padding: var(--dj-space-3) var(--dj-space-4); }
+.stat span { display: block; font-family: var(--dj-font-mono); font-size: var(--dj-text-xs); color: var(--dj-text-muted); letter-spacing: var(--dj-tracking-label); text-transform: uppercase; }
+.stat b { font-family: var(--dj-font-mono); font-weight: 500; font-size: var(--dj-text-xl); font-variant-numeric: tabular-nums; }
+.stat small { font-size: var(--dj-text-xs); color: var(--dj-text-muted); margin-left: var(--dj-space-1); }
+.log { font-family: var(--dj-font-mono); font-size: var(--dj-text-xs); line-height: 1.7; min-height: 11.5em; }
+.log li { display: grid; grid-template-columns: 8ch 11ch 1fr; gap: var(--dj-space-3); color: var(--dj-text-muted); }
+.log li span:nth-child(2) { color: var(--dj-text); }
+.log li.is-user span:nth-child(2) { color: var(--dj-accent); }
+.log li.is-agent span:nth-child(2) { color: var(--dj-info); }
+.mock-foot { display: flex; justify-content: space-between; align-items: center; gap: var(--dj-space-3); padding: var(--dj-space-3) var(--dj-space-4); border-top: 1px solid var(--dj-border); font-family: var(--dj-font-mono); font-size: var(--dj-text-xs); color: var(--dj-text-muted); }
+
+/* sections */
+section.block { padding-block: var(--dj-space-9) 0; scroll-margin-top: 56px; }
+.head { display: grid; gap: var(--dj-space-3); margin-bottom: var(--dj-space-6); }
+.head h2 { font-size: clamp(1.75rem, 1.2rem + 2vw, 3rem); max-width: 22ch; }
+.head p { color: var(--dj-text-muted); max-width: 60ch; }
+
+/* bento */
+.bento { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--dj-border); border: 1px solid var(--dj-border); }
+.cell { background: var(--dj-surface); padding: var(--dj-space-5); display: flex; flex-direction: column; gap: var(--dj-space-3); min-height: 168px; transition: background var(--dj-dur-fast) var(--dj-ease); }
+.cell:hover { background: var(--dj-surface-raised); }
+.cell .icon { color: var(--dj-accent); }
+.cell h3 { font-family: var(--dj-font-mono); font-weight: 500; font-size: var(--dj-text-sm); letter-spacing: 0; }
+.cell p { font-size: var(--dj-text-sm); color: var(--dj-text-muted); }
+.cell .viz { margin-top: auto; }
+.span-2 { grid-column: span 2; }
+@media (max-width: 960px) { .bento { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .bento { grid-template-columns: minmax(0, 1fr); } .span-2 { grid-column: auto; } }
+.mini li { display: flex; justify-content: space-between; gap: var(--dj-space-3); font-family: var(--dj-font-mono); font-size: var(--dj-text-xs); padding-block: var(--dj-space-1); border-top: 1px solid var(--dj-border); color: var(--dj-text-muted); }
+.mini li:first-child { border-top: 0; }
+.mini .ok { color: var(--dj-success); }
+.mini .wait { color: var(--dj-accent); }
+.spark { width: 100%; height: 64px; }
+.spark polyline { fill: none; stroke: var(--dj-accent); stroke-width: 1.5; vector-effect: non-scaling-stroke; }
+.spark line { stroke: var(--dj-border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+
+/* terminal */
+.split { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--dj-space-6); align-items: start; }
+@media (min-width: 1000px) { .split { grid-template-columns: 7fr 5fr; gap: var(--dj-space-8); } .split.flip { grid-template-columns: 5fr 7fr; } }
+.term { border: 1px solid var(--dj-border); background: var(--dj-surface); border-radius: var(--dj-radius-sm); min-width: 0; }
+.term header { display: flex; justify-content: space-between; align-items: center; gap: var(--dj-space-3); padding: var(--dj-space-2) var(--dj-space-3) var(--dj-space-2) var(--dj-space-4); border-bottom: 1px solid var(--dj-border); font-family: var(--dj-font-mono); font-size: var(--dj-text-xs); color: var(--dj-text-muted); }
+.term pre { margin: 0; padding: var(--dj-space-4); overflow-x: auto; font-size: var(--dj-text-sm); line-height: 1.7; color: var(--dj-text); }
+.term .p { color: var(--dj-accent); user-select: none; }
+.term .c { color: var(--dj-text-muted); }
+.term .k { color: var(--dj-info); }
+.copy { font: 500 var(--dj-text-xs)/1 var(--dj-font-mono); color: var(--dj-text-muted); background: transparent; border: 1px solid var(--dj-border); border-radius: var(--dj-radius-sm); padding: var(--dj-space-1) var(--dj-space-2); cursor: pointer; transition: color var(--dj-dur-fast) var(--dj-ease), border-color var(--dj-dur-fast) var(--dj-ease); }
+.copy:hover { color: var(--dj-text); border-color: var(--dj-bone-500); }
+
+.points li { display: grid; grid-template-columns: 3ch 1fr; gap: var(--dj-space-3); padding-block: var(--dj-space-4); border-top: 1px solid var(--dj-border); }
+.points li:first-child { border-top: 0; padding-top: 0; }
+.points .n { font-family: var(--dj-font-mono); font-size: var(--dj-text-sm); color: var(--dj-accent); }
+.points b { display: block; font-family: var(--dj-font-display); font-weight: 600; font-size: var(--dj-text-lg); letter-spacing: var(--dj-tracking-display); }
+.points span { color: var(--dj-text-muted); font-size: var(--dj-text-sm); }
+
+.types { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; background: var(--dj-border); border: 1px solid var(--dj-border); margin-top: var(--dj-space-5); }
+.types li { background: var(--dj-surface); padding: var(--dj-space-3) var(--dj-space-4); font-size: var(--dj-text-xs); color: var(--dj-text-muted); }
+.types code { display: block; color: var(--dj-text); font-size: var(--dj-text-sm); }
+.types .wide { grid-column: span 2; }
+
+.rules { border: 1px solid var(--dj-border); background: var(--dj-surface); padding: var(--dj-space-5); margin-top: var(--dj-space-5); }
+.rules p { max-width: 56ch; }
+.rules code { color: var(--dj-accent); }
+
+footer { margin-top: var(--dj-space-9); border-top: 1px solid var(--dj-border); padding-block: var(--dj-space-7); }
+footer .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: var(--dj-space-5); }
+footer img { width: 140px; }
+footer p, footer a { font-size: var(--dj-text-sm); }
+footer .links { display: flex; gap: var(--dj-space-5); }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<svg width="0" height="0" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-steps" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><path d="M6 8v8M12 6h8M12 18h8"/></symbol>
+    <symbol id="i-checklist" viewBox="0 0 24 24"><path d="m3 17 2 2 4-4M3 7l2 2 4-4M13 6h8M13 12h8M13 18h8"/></symbol>
+    <symbol id="i-stats" viewBox="0 0 24 24"><path d="M12 20V10M18 20V4M6 20v-4"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v18h18M19 9l-5 5-4-4-3 3"/></symbol>
+    <symbol id="i-table" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18"/><path d="M3 9h18M3 15h18M9 3v18"/></symbol>
+    <symbol id="i-log" viewBox="0 0 24 24"><path d="m4 17 6-6-6-6M12 19h8"/></symbol>
+    <symbol id="i-actions" viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="8"/><path d="M7 12h6"/></symbol>
+    <symbol id="i-form" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="6"/><rect x="3" y="14" width="10" height="6"/></symbol>
+    <symbol id="i-markdown" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></symbol>
+    <symbol id="i-html" viewBox="0 0 24 24"><path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/></symbol>
+    <symbol id="i-done" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+    <symbol id="i-running" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.55"/></symbol>
+    <symbol id="i-waiting" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-failed" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-skipped" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+    <symbol id="i-pending" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/></symbol>
+  </defs>
+</svg>
+
+<header class="bar">
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="djt-hub home">
+      <img src="assets/brand/logo/djaunt-icon-gold.svg" alt="" width="28" height="28">
+      djt-hub
+    </a>
+    <nav class="nav" aria-label="Sections">
+      <a href="#blocks">Blocks</a>
+      <a href="#loop">The loop</a>
+      <a href="#events">Events</a>
+      <a href="#services">Services</a>
+      <a href="#agents">Agents</a>
+    </nav>
+    <a class="btn btn-sm" href="#install">Install</a>
+  </div>
+</header>
+
+<main id="main">
+<section class="hero" id="top">
+  <img class="watermark" src="assets/brand/logo/djaunt-icon-gold.svg" alt="" aria-hidden="true">
+  <div class="wrap">
+    <p class="eyebrow">Local daemon &middot; 127.0.0.1:7717</p>
+    <h1>A live page for every long-running job.</h1>
+
+    <div class="hero-grid">
+      <div>
+        <p class="lede">djt-hub is a small local daemon. Your agent builds a page of steps, stats and logs. You watch it update and click the gates.</p>
+        <p class="lede">Every click comes back to the agent as an event.</p>
+        <div class="cta">
+          <a class="btn btn-primary" href="#install">Install</a>
+          <a class="btn" href="#loop">See the loop</a>
+        </div>
+        <ul class="facts">
+          <li><b>One Go binary</b>daemon, CLI, web UI</li>
+          <li><b>127.0.0.1 only</b>no auth, no cloud</li>
+          <li><b>Live over SSE</b>no polling, no refresh</li>
+          <li><b>SQLite + logs</b>survives restarts</li>
+        </ul>
+      </div>
+
+      <div class="mock" aria-label="Simulated hub page">
+        <div class="mock-bar">
+          <span class="dot" aria-hidden="true"></span>
+          <span class="id">release-42</span>
+          <strong>Release 4.2</strong>
+          <span class="chip" id="chip"><i></i><span id="chip-text">oncall armed</span></span>
+        </div>
+        <div class="mock-body">
+          <div class="panel">
+            <h3>Runbook</h3>
+            <ul class="steps" id="steps"></ul>
+            <noscript><p class="muted">Turn on JavaScript to try the simulated hub.</p></noscript>
+          </div>
+          <div class="stats" id="stats"></div>
+          <div class="panel">
+            <h3>Events</h3>
+            <ul class="log" id="log" aria-live="polite"></ul>
+          </div>
+        </div>
+        <div class="mock-foot">
+          <span>Simulated. Press Approve.</span>
+          <button class="copy" id="replay" type="button">Replay</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="blocks">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow">Ten block types</p>
+      <h2>Pick blocks. Patch state. The page redraws.</h2>
+      <p>Each block binds to a path in the hub's JSON state. Change the value and every open tab updates.</p>
+    </div>
+
+    <div class="bento">
+      <article class="cell span-2">
+        <svg class="icon"><use href="#i-steps"/></svg>
+        <h3>steps</h3>
+        <p>Runbook steps with status, live timers and approval gates.</p>
+        <ul class="mini viz" aria-hidden="true">
+          <li><span>build</span><span class="ok">done</span></li>
+          <li><span>migrate</span><span class="ok">done</span></li>
+          <li><span>promote</span><span class="wait">waiting for you</span></li>
+        </ul>
+      </article>
+      <article class="cell">
+        <svg class="icon"><use href="#i-checklist"/></svg>
+        <h3>checklist</h3>
+        <p>Items to tick. Each toggle is an event.</p>
+      </article>
+      <article class="cell">
+        <svg class="icon"><use href="#i-stats"/></svg>
+        <h3>stats</h3>
+        <p>Big numbers with units and a tone: ok, warn, bad, info.</p>
+      </article>
+      <article class="cell span-2">
+        <svg class="icon"><use href="#i-chart"/></svg>
+        <h3>chart</h3>
+        <p>Line, area or bar. Time series or categories.</p>
+        <svg class="spark viz" viewBox="0 0 200 64" preserveAspectRatio="none" aria-hidden="true">
+          <line x1="0" y1="16" x2="200" y2="16"/><line x1="0" y1="32" x2="200" y2="32"/><line x1="0" y1="48" x2="200" y2="48"/>
+          <polyline points="0,44 20,40 40,46 60,30 80,34 100,22 120,28 140,18 160,24 180,12 200,16"/>
+        </svg>
+      </article>
+      <article class="cell">
+        <svg class="icon"><use href="#i-table"/></svg>
+        <h3>table</h3>
+        <p>Rows from state. Status columns render as badges.</p>
+      </article>
+      <article class="cell">
+        <svg class="icon"><use href="#i-log"/></svg>
+        <h3>log</h3>
+        <p>Lines from state, or live events filtered by prefix.</p>
+      </article>
+      <article class="cell">
+        <svg class="icon"><use href="#i-actions"/></svg>
+        <h3>actions</h3>
+        <p>Buttons. Dangerous ones ask for a second click.</p>
+      </article>
+      <article class="cell">
+        <svg class="icon"><use href="#i-form"/></svg>
+        <h3>form</h3>
+        <p>Fields that submit their values as one event.</p>
+      </article>
+      <article class="cell">
+        <svg class="icon"><use href="#i-markdown"/></svg>
+        <h3>markdown</h3>
+        <p>Headings, lists, code and links.</p>
+      </article>
+      <article class="cell">
+        <svg class="icon"><use href="#i-html"/></svg>
+        <h3>html</h3>
+        <p>A sandboxed iframe, for when no block fits.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="loop">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow">The loop</p>
+      <h2>The agent writes the page. You decide. The agent acts.</h2>
+      <p>Everything is a CLI command that prints JSON. No SDK, no server code.</p>
+    </div>
+
+    <div class="split">
+      <div class="term">
+        <header><span>quick start</span><button class="copy" type="button" data-copy="quick">Copy</button></header>
+<pre id="quick"><span class="p">$ </span>djt-hub create release-42 --title "Release 4.2"
+<span class="p">$ </span>djt-hub block add release-42 '{"id":"run","type":"steps","title":"Runbook","bind":"steps"}'
+<span class="p">$ </span>djt-hub patch release-42 --json '[{"path":"steps","value":[
+    {"id":"build","label":"Build","status":"running"},
+    {"id":"promote","label":"Promote","status":"waiting","gate":"Promote to prod?"}]}]'
+<span class="p">$ </span>djt-hub open release-42
+<span class="p">$ </span>djt-hub wait release-42 --match block=run --match step=promote --timeout 1h
+<span class="p">$ </span>djt-hub patch release-42 steps.promote.status=running
+<span class="p">$ </span>djt-hub close release-42</pre>
+      </div>
+
+      <ol class="points">
+        <li><span class="n">01</span><div><b>Create a hub</b><span>One hub per process. It persists until closed, then archives read-only.</span></div></li>
+        <li><span class="n">02</span><div><b>Add blocks, patch state</b><span>Give list items an id. Patch by id, never by position.</span></div></li>
+        <li><span class="n">03</span><div><b>Wait for a click</b><span>The call blocks until a matching event arrives, then prints it.</span></div></li>
+        <li><span class="n">04</span><div><b>Act, then update the page</b><span>A click asks. The agent does the work and moves the step on.</span></div></li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="events">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow">Events</p>
+      <h2>Every click is an event with a seq.</h2>
+      <p>Wait for one, or follow the stream while you work. Pass a seq to replay what you missed.</p>
+    </div>
+
+    <div class="split flip">
+      <div>
+        <ul class="types">
+          <li><code>gate.approve</code>gate.reject</li>
+          <li><code>action</code>button press</li>
+          <li><code>form.submit</code>values by field</li>
+          <li><code>checklist.toggle</code>item and done</li>
+          <li><code>svc.*</code>started, exited, failed</li>
+          <li><code>agent.*</code>done with cost, or failed</li>
+          <li class="wide"><code>emit &lt;hub&gt; &lt;type&gt; [json]</code>Agents, services and html blocks can add any type.</li>
+        </ul>
+      </div>
+      <div class="term">
+        <header><span>djt-hub wait release-42 &hellip;</span><button class="copy" type="button" data-copy="evt">Copy</button></header>
+<pre id="evt">{
+  "seq": 41,
+  "hub": "release-42",
+  "source": "user",
+  "type": "gate.approve",
+  "payload": { "block": "run", "step": "promote", "note": "go" },
+  "ts": "2026-10-16T15:42:07Z"
+}</pre>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="services">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow">Services</p>
+      <h2>The page stays live after the agent leaves.</h2>
+      <p>The daemon supervises commands in their own process groups. They survive the agent exiting and daemon restarts. Closing the hub stops them.</p>
+    </div>
+
+    <div class="split">
+      <div class="term">
+        <header><span>supervised commands</span><button class="copy" type="button" data-copy="svc">Copy</button></header>
+<pre id="svc"><span class="c"># poll every 30s</span>
+<span class="p">$ </span>djt-hub svc add release-42 p99 --every 30s -- 'djt-hub patch health.p99.value=$(./p99.sh)'
+<span class="c"># keep a tail running</span>
+<span class="p">$ </span>djt-hub svc add release-42 tail --restart always -- kubectl logs -f deploy/api
+<span class="c"># run on a schedule</span>
+<span class="p">$ </span>djt-hub svc add release-42 nightly --cron "0 3 * * *" -- ./report.sh
+<span class="c"># react to a click</span>
+<span class="p">$ </span>djt-hub svc add release-42 on-reject --on gate.reject --match step=promote -- ./rollback.sh</pre>
+      </div>
+      <ul class="points">
+        <li><span class="n">01</span><div><b>Poll, tail, schedule</b><span><code>--every</code>, <code>--restart</code> and <code>--cron</code> cover the usual jobs.</span></div></li>
+        <li><span class="n">02</span><div><b>Triggers on events</b><span>The event JSON arrives on stdin. Runs are one at a time, in order.</span></div></li>
+        <li><span class="n">03</span><div><b>Hub-aware by default</b><span>Plain <code>djt-hub patch</code> inside a service targets its own hub.</span></div></li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="agents">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow">Daemon agents</p>
+      <h2>Claude on call, only when nobody is listening.</h2>
+      <p>If a click lands while no session waits on the hub, a daemon agent runs <code>claude -p</code> for that event. Your own session always wins.</p>
+    </div>
+
+    <div class="split">
+      <div class="term">
+        <header><span>an on-call agent</span><button class="copy" type="button" data-copy="agent">Copy</button></header>
+<pre id="agent"><span class="p">$ </span>djt-hub agent add release-42 oncall --on gate.approve --match step=promote \
+    --prompt "Run the promote step, then mark it done" \
+    --allow "Bash(./promote.sh)"
+<span class="p">$ </span>djt-hub agent ls release-42
+<span class="p">$ </span>djt-hub agent reset release-42 oncall</pre>
+      </div>
+      <ul class="points">
+        <li><span class="n">01</span><div><b>Read-only by default</b><span>Read, Grep, Glob and <code>djt-hub</code>. Widen it per agent with <code>--allow</code>.</span></div></li>
+        <li><span class="n">02</span><div><b>One resumed session</b><span>Runs never overlap. The agent remembers earlier events until you reset it.</span></div></li>
+        <li><span class="n">03</span><div><b>Every run reports cost</b><span>Each ends in <code>agent.done</code> or <code>agent.failed</code>. Budget caps a run at $1.00 unless you say otherwise.</span></div></li>
+      </ul>
+    </div>
+
+    <div class="rules">
+      <p>Prefer a service or a plain <code>--on</code> trigger. Add an agent only when the event needs judgment.</p>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="install">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow">Install</p>
+      <h2>Build it, run it under launchd, open a page.</h2>
+      <p>Needs Go. Binds to 127.0.0.1 only and keeps its data in <code>~/.local/share/djt-hub/</code>.</p>
+    </div>
+
+    <div class="split">
+      <div class="term">
+        <header><span>macOS</span><button class="copy" type="button" data-copy="inst">Copy</button></header>
+<pre id="inst"><span class="p">$ </span>brew install go
+<span class="p">$ </span>./install.sh              <span class="c"># builds ~/.local/bin/djt-hub, runs it under launchd</span>
+<span class="p">$ </span>djt-hub status
+<span class="p">$ </span>djt-hub docs               <span class="c"># the agent guide</span>
+<span class="p">$ </span>examples/release-runbook.sh</pre>
+      </div>
+      <ul class="points">
+        <li><span class="n">01</span><div><b>Skip launchd</b><span>Run <code>./install.sh --no-launchd</code> to start the daemon yourself.</span></div></li>
+        <li><span class="n">02</span><div><b>Upgrade</b><span>Pull, then rerun <code>install.sh</code>.</span></div></li>
+        <li><span class="n">03</span><div><b>Remove</b><span><code>djt-hub uninstall</code> drops the launchd agent and keeps your data.</span></div></li>
+      </ul>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <img src="assets/brand/logo/djaunt-lockup.svg" alt="Djaunt" width="140" height="138" class="lockup">
+    <p class="muted">djt-hub is part of Djaunt. Music, software and art.</p>
+    <div class="links">
+      <a href="https://github.com/tory37/djaunt-agent-hubs">GitHub</a>
+      <a href="https://github.com/tory37/djaunt-agent-hubs/blob/main/docs/agent-guide.md">Agent guide</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var STATUS_LABEL = { done: "done", running: "running", waiting: "waiting for you", failed: "failed", skipped: "skipped", pending: "pending" };
+  var INITIAL_STEPS = [
+    { id: "build", label: "Build", status: "done", meta: "2m 14s" },
+    { id: "test", label: "Test", status: "done", meta: "1m 48s" },
+    { id: "migrate", label: "Migrate", status: "done", meta: "36s" },
+    { id: "promote", label: "Promote to prod", status: "waiting", meta: "gate" },
+    { id: "verify", label: "Verify", status: "pending", meta: "" }
+  ];
+  var INITIAL_LOG = [
+    ["14:02:11", "svc:p99", "patch health.p99 = 142", ""],
+    ["14:02:41", "svc:p99", "patch health.p99 = 139", ""],
+    ["14:03:05", "hub", "step promote is waiting", ""]
+  ];
+
+  var stepsEl = document.getElementById("steps");
+  var statsEl = document.getElementById("stats");
+  var logEl = document.getElementById("log");
+  var chipEl = document.getElementById("chip");
+  var chipText = document.getElementById("chip-text");
+  var timers = [];
+  var steps, stats, log;
+
+  function icon(name, cls) {
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "icon icon-sm" + (cls ? " " + cls : ""));
+    svg.setAttribute("aria-hidden", "true");
+    var use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+    use.setAttribute("href", "#i-" + name);
+    svg.appendChild(use);
+    return svg;
+  }
+
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function clock() {
+    return new Date().toLocaleTimeString([], { hour12: false });
+  }
+
+  function setChip(text, busy) {
+    chipText.textContent = text;
+    chipEl.classList.toggle("is-busy", busy);
+  }
+
+  function pushLog(who, text, kind) {
+    log.push([clock(), who, text, kind || ""]);
+    if (log.length > 8) log.shift();
+    renderLog();
+  }
+
+  function renderLog() {
+    logEl.replaceChildren();
+    log.forEach(function (row) {
+      var item = el("li", row[3] ? "is-" + row[3] : "");
+      item.append(el("span", "", row[0]), el("span", "", row[1]), el("span", "", row[2]));
+      logEl.appendChild(item);
+    });
+  }
+
+  function renderStats() {
+    statsEl.replaceChildren();
+    stats.forEach(function (stat) {
+      var tile = el("div", "stat");
+      var value = el("b", "", stat.value);
+      if (stat.unit) value.appendChild(el("small", "", stat.unit));
+      tile.append(el("span", "", stat.label), value);
+      statsEl.appendChild(tile);
+    });
+  }
+
+  function renderSteps() {
+    stepsEl.replaceChildren();
+    steps.forEach(function (step) {
+      var row = el("li", "st-" + step.status);
+      row.append(icon(step.status), el("span", "", step.label + " · " + STATUS_LABEL[step.status]), el("span", "meta", step.meta));
+      if (step.status === "waiting") {
+        var gate = el("div", "gate");
+        var approve = el("button", "btn btn-primary btn-glow btn-sm", "Approve");
+        var reject = el("button", "btn btn-sm", "Reject");
+        approve.type = reject.type = "button";
+        approve.addEventListener("click", function () { decide("approve"); });
+        reject.addEventListener("click", function () { decide("reject"); });
+        gate.append(el("p", "", "Promote to prod?"), approve, reject);
+        row.appendChild(gate);
+      }
+      stepsEl.appendChild(row);
+    });
+  }
+
+  function setStep(id, status, meta) {
+    steps.forEach(function (step) {
+      if (step.id === id) { step.status = status; step.meta = meta; }
+    });
+    renderSteps();
+  }
+
+  function later(ms, fn) { timers.push(setTimeout(fn, ms)); }
+
+  function decide(choice) {
+    if (choice === "reject") {
+      pushLog("user", "gate.reject step=promote", "user");
+      setStep("promote", "failed", "rejected");
+      setStep("verify", "skipped", "");
+      setChip("oncall armed", false);
+      return;
+    }
+    pushLog("user", "gate.approve step=promote", "user");
+    setStep("promote", "running", "");
+    setChip("oncall running", true);
+    later(700, function () { pushLog("svc:oncall", "no session attached, waking agent", "agent"); });
+    later(1800, function () { pushLog("agent", "promote.sh started", "agent"); });
+    later(3200, function () {
+      setStep("promote", "done", "1m 12s");
+      setStep("verify", "running", "");
+      pushLog("agent", "promote done, verifying", "agent");
+    });
+    later(4600, function () {
+      setStep("verify", "done", "18s");
+      stats[0].value = "4.2";
+      renderStats();
+      pushLog("svc:oncall", "agent.done turns=4", "agent");
+      setChip("oncall armed", false);
+    });
+  }
+
+  function reset() {
+    timers.forEach(clearTimeout);
+    timers = [];
+    steps = INITIAL_STEPS.map(function (step) { return Object.assign({}, step); });
+    stats = [
+      { label: "Version", value: "4.1", unit: "" },
+      { label: "p99", value: "142", unit: "ms" },
+      { label: "Errors", value: "0.02", unit: "%" }
+    ];
+    log = INITIAL_LOG.map(function (row) { return row.slice(); });
+    setChip("oncall armed", false);
+    renderSteps();
+    renderStats();
+    renderLog();
+  }
+
+  document.getElementById("replay").addEventListener("click", reset);
+  reset();
+
+  document.querySelectorAll("[data-copy]").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var source = document.getElementById(button.dataset.copy);
+      var text = source.textContent.replace(/^\$ /gm, "");
+      var done = function () {
+        button.textContent = "Copied";
+        setTimeout(function () { button.textContent = "Copy"; }, 1600);
+      };
+      try {
+        navigator.clipboard.writeText(text).then(done, function () {});
+      } catch (error) {}
+    });
+  });
+})();
+</script>
+</body>
+</html>
