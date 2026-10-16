@@ -16,6 +16,9 @@ const usageText = `djt-hub — live local hubs for agents
 Daemon
   serve [--addr A] [--data DIR]        run the daemon (launchd runs this)
   status                               exit 0 if the daemon answers
+  install [--addr A] [--data DIR]      run the daemon under launchd (macOS)
+  uninstall                            remove the launchd agent; keeps data
+  docs                                 print the agent guide
 
 Hubs
   create <hub> [--title T]             new hub; prints its URL
@@ -57,21 +60,24 @@ Daemon address: $DJT_HUB_ADDR (default 127.0.0.1:7717).
 type command func(ctx context.Context, args []string) error
 
 var commands = map[string]command{
-	"serve":  runServe,
-	"status": runStatus,
-	"create": runCreate,
-	"ls":     runList,
-	"show":   runShow,
-	"open":   runOpen,
-	"close":  runClose,
-	"delete": runDelete,
-	"block":  runBlock,
-	"patch":  runPatch,
-	"get":    runGet,
-	"emit":   runEmit,
-	"events": runEvents,
-	"wait":   runWait,
-	"svc":    runService,
+	"serve":     runServe,
+	"status":    runStatus,
+	"create":    runCreate,
+	"ls":        runList,
+	"show":      runShow,
+	"open":      runOpen,
+	"close":     runClose,
+	"delete":    runDelete,
+	"block":     runBlock,
+	"patch":     runPatch,
+	"get":       runGet,
+	"emit":      runEmit,
+	"events":    runEvents,
+	"wait":      runWait,
+	"svc":       runService,
+	"docs":      runDocs,
+	"install":   runInstall,
+	"uninstall": runUninstall,
 }
 
 const (
