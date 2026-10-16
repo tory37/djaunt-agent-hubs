@@ -300,6 +300,8 @@ func claudeArgs(sessionID string) []string {
 	}
 	args := []string{
 		"-p", "--output-format", "json",
+		// The user's CLAUDE.md, hooks, and MCP servers are for their own sessions.
+		"--setting-sources", "project,local", "--strict-mcp-config",
 		"--allowedTools", strings.Join(tools, ","),
 		"--append-system-prompt", docs.AgentGuide + onCallRules,
 		"--max-budget-usd", cmp.Or(os.Getenv(envAgentBudget), defaultAgentBudget),

@@ -91,7 +91,7 @@ func TestCLIAgentResumesItsSessionAndReportsCost(t *testing.T) {
 		t.Fatalf("agent.done = %+v", done)
 	}
 	args, prompt := readCall(t, calls, 0)
-	for _, want := range []string{"-p\n", "--output-format\njson\n", "--allowedTools\nRead,Grep,Glob,Bash(djt-hub:*),Bash(git:*)\n", "--max-budget-usd\n0.50\n", "daemon agent"} {
+	for _, want := range []string{"-p\n", "--output-format\njson\n", "--setting-sources\nproject,local\n", "--strict-mcp-config\n", "--allowedTools\nRead,Grep,Glob,Bash(djt-hub:*),Bash(git:*)\n", "--max-budget-usd\n0.50\n", "daemon agent"} {
 		if !strings.Contains(args, want) {
 			t.Errorf("first call lacks %q:\n%s", want, args)
 		}

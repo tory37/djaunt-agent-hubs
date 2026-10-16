@@ -179,6 +179,7 @@ djt-hub agent rm release-42 oncall
 
 - It is an `--unattached` trigger that runs `claude -p`. Your `wait` or `follow` keeps it quiet.
 - Each run gets your `--prompt`, the event, and the hub's blocks and state. It also gets this guide.
+- It loads the workdir's project settings and `CLAUDE.md`, never your user ones or any MCP servers.
 - Default tools: `Read`, `Grep`, `Glob`, `Bash(djt-hub:*)`. `--allow TOOL` adds one, repeatable.
 - Runs resume one Claude session, so the agent remembers earlier events. `agent reset` starts fresh.
 - `--budget` caps each run in USD (default 1.00). `--timeout` kills a run (default 10m). `--model` picks the model.
