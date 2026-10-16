@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -56,6 +57,70 @@ func TestReopenKeepsData(t *testing.T) {
 	defer second.Close()
 	if _, err := second.GetHub(context.Background(), "persisted"); err != nil {
 		t.Fatalf("hub lost after reopen: %v", err)
+	}
+}
+
+func TestOpenMigratesAV1DatabaseAndKeepsServices(t *testing.T) {
+	databasePath := filepath.Join(t.TempDir(), "hub.db")
+	v1, err := sql.Open("sqlite", "file:"+databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, statement := range []string{
+		schemaV1,
+		`PRAGMA user_version = 1`,
+		`INSERT INTO hubs VALUES ('old', 'Old', 'active', 0, 0)`,
+		`INSERT INTO services (hub_id, name, command, workdir, env, restart, desired, created_at)
+		 VALUES ('old', 'watch', 'sleep 1', '/tmp', '{}', 'on-failure', 'running', 0)`,
+	} {
+		if _, err := v1.Exec(statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+	v1.Close()
+
+	migrated, err := Open(databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer migrated.Close()
+	service, err := migrated.GetService(context.Background(), "old", "watch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if service.Triggered() || service.CursorSeq != 0 || len(service.OnMatch) != 0 || service.Command != "sleep 1" {
+		t.Fatalf("migrated service = %+v", service)
+	}
+	var version int
+	migrated.db.QueryRow(`PRAGMA user_version`).Scan(&version)
+	if version != len(migrations) {
+		t.Fatalf("user_version = %d, want %d", version, len(migrations))
+	}
+}
+
+func TestTriggeredServiceStartsAtTheLatestEvent(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	mustCreateHub(t, store, "h")
+	past, err := store.AppendEvent(ctx, "h", "user", "gate.approve", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := store.AddService(ctx, Service{
+		HubID: "h", Name: "gate", Command: "true", Workdir: "/tmp",
+		OnType: "gate.approve", OnMatch: []string{"step=promote"}, Unattached: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved.CursorSeq != past.Seq || saved.Restart != RestartNever || !saved.Unattached || saved.OnMatch[0] != "step=promote" {
+		t.Fatalf("saved = %+v", saved)
+	}
+	if err := store.SetServiceCursor(ctx, "h", "gate", 99); err != nil {
+		t.Fatal(err)
+	}
+	if reloaded, _ := store.GetService(ctx, "h", "gate"); reloaded.CursorSeq != 99 {
+		t.Fatalf("cursor = %d", reloaded.CursorSeq)
 	}
 }
 

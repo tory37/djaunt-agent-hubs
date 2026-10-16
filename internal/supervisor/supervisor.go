@@ -1,21 +1,26 @@
 // Package supervisor runs hub services: long-lived processes restarted per
-// policy, and scheduled jobs fired by --every or --cron. Each run is a shell
-// command in its own process group, so stopping a service kills its children.
+// policy, scheduled jobs fired by --every or --cron, and triggers run once per
+// matching hub event. Each run is a shell command in its own process group, so
+// stopping a service kills its children.
 package supervisor
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 
 	"github.com/robfig/cron/v3"
+	"github.com/tory37/djaunt-agent-hubs/internal/match"
 	"github.com/tory37/djaunt-agent-hubs/internal/store"
 )
 
@@ -31,10 +36,12 @@ const (
 	EventStarted = "svc.started"
 	EventExited  = "svc.exited"
 	EventFailed  = "svc.failed"
+	EventDropped = "svc.dropped"
 
 	stopGracePeriod   = 5 * time.Second
 	stableRunDuration = 30 * time.Second
 	maxLogBytes       = 5 << 20
+	maxQueuedEvents   = 100
 )
 
 // EventSink records a lifecycle event in the hub log and pushes it to viewers.
@@ -48,12 +55,33 @@ type Config struct {
 	MinBackoff  time.Duration
 	MaxBackoff  time.Duration
 	StopTimeout time.Duration
+	// Attached reports whether a CLI agent listens on a hub. Unattached
+	// triggers skip events that arrive while it is true.
+	Attached func(hubID string) bool
 }
 
 type Supervisor struct {
 	config Config
 	mu     sync.Mutex
 	units  map[unitKey]*unit
+
+	inboxMu  sync.Mutex
+	inbox    []notice
+	wake     chan struct{}
+	done     chan struct{}
+	shutOnce sync.Once
+}
+
+// notice is an event waiting for delivery to triggers, with the attachment
+// state at the moment it was recorded.
+type notice struct {
+	event    store.Event
+	attached bool
+}
+
+type queuedEvent struct {
+	event store.Event
+	skip  bool
 }
 
 type unitKey struct{ hubID, name string }
@@ -72,6 +100,11 @@ type unit struct {
 	lastError  string
 	restarts   int
 	failStreak int
+
+	matchers      []match.Matcher
+	queue         []queuedEvent
+	event         *store.Event
+	queuedThrough int64
 }
 
 type Status struct {
@@ -83,6 +116,7 @@ type Status struct {
 	LastError string     `json:"last_error,omitempty"`
 	StartedAt *time.Time `json:"started_at,omitempty"`
 	NextRun   *time.Time `json:"next_run,omitempty"`
+	Queued    int        `json:"queued,omitempty"`
 	Log       string     `json:"log"`
 }
 
@@ -99,7 +133,17 @@ func New(config Config) *Supervisor {
 	if config.Events == nil {
 		config.Events = func(context.Context, string, string, string, any) {}
 	}
-	return &Supervisor{config: config, units: map[unitKey]*unit{}}
+	if config.Attached == nil {
+		config.Attached = func(string) bool { return false }
+	}
+	supervisor := &Supervisor{
+		config: config,
+		units:  map[unitKey]*unit{},
+		wake:   make(chan struct{}, 1),
+		done:   make(chan struct{}),
+	}
+	go supervisor.deliverNotices()
+	return supervisor
 }
 
 func ParseSchedule(service store.Service) (cron.Schedule, error) {
@@ -114,7 +158,8 @@ func ParseSchedule(service store.Service) (cron.Schedule, error) {
 }
 
 // Restore starts every service that should be running in an active hub.
-// The daemon calls it once at boot.
+// Triggers first queue the events logged after their cursor, so a click made
+// while the daemon was down still runs. The daemon calls it once at boot.
 func (s *Supervisor) Restore(ctx context.Context) error {
 	services, err := s.config.Store.ListRunnableServices(ctx)
 	if err != nil {
@@ -125,11 +170,39 @@ func (s *Supervisor) Restore(ctx context.Context) error {
 		if err != nil {
 			continue
 		}
+		var missed []store.Event
+		if service.Triggered() {
+			if missed, err = s.missedEvents(ctx, service); err != nil {
+				return err
+			}
+		}
 		s.mu.Lock()
-		s.startLocked(s.unitFor(service, schedule))
+		current := s.unitFor(service, schedule)
+		for _, event := range missed {
+			if current.wants(event) {
+				s.enqueueLocked(current, queuedEvent{event: event})
+			}
+		}
+		s.startLocked(current)
 		s.mu.Unlock()
 	}
 	return nil
+}
+
+func (s *Supervisor) missedEvents(ctx context.Context, service store.Service) ([]store.Event, error) {
+	var missed []store.Event
+	filter := store.EventFilter{AfterSeq: service.CursorSeq, Type: service.OnType}
+	for {
+		page, err := s.config.Store.ListEvents(ctx, service.HubID, filter)
+		if err != nil {
+			return nil, err
+		}
+		missed = append(missed, page...)
+		if len(page) == 0 {
+			return missed, nil
+		}
+		filter.AfterSeq = page[len(page)-1].Seq
+	}
 }
 
 func (s *Supervisor) Add(ctx context.Context, service store.Service) (Status, error) {
@@ -164,6 +237,14 @@ func (s *Supervisor) Start(ctx context.Context, hubID, name string) (Status, err
 		return Status{}, err
 	}
 	service.Desired = store.DesiredRunning
+	if service.Triggered() {
+		if service.CursorSeq, err = s.config.Store.LastEventSeq(ctx, hubID); err != nil {
+			return Status{}, err
+		}
+		if err := s.config.Store.SetServiceCursor(ctx, hubID, name, service.CursorSeq); err != nil {
+			return Status{}, err
+		}
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	current := s.unitFor(service, schedule)
@@ -216,6 +297,7 @@ func (s *Supervisor) StopHub(hubID string) {
 // Shutdown halts every service. Desired state is kept, so Restore relaunches
 // them on the next boot.
 func (s *Supervisor) Shutdown() {
+	s.shutOnce.Do(func() { close(s.done) })
 	s.mu.Lock()
 	keys := make([]unitKey, 0, len(s.units))
 	for key := range s.units {
@@ -279,6 +361,7 @@ func (s *Supervisor) statusLocked(current *unit) Status {
 		Restarts:  current.restarts,
 		LastExit:  current.lastExit,
 		LastError: current.lastError,
+		Queued:    len(current.queue),
 		Log:       s.LogPath(current.service.HubID, current.service.Name),
 	}
 	if current.process != nil {
@@ -302,11 +385,18 @@ func (s *Supervisor) unitFor(service store.Service, schedule cron.Schedule) *uni
 	}
 	current.service = service
 	current.schedule = schedule
+	current.matchers, _ = match.Parse(service.OnMatch)
+	current.queuedThrough = max(current.queuedThrough, service.CursorSeq)
 	return current
 }
 
 func (s *Supervisor) startLocked(current *unit) {
 	current.generation++
+	if current.service.Triggered() {
+		current.state = StateWaiting
+		s.runNextLocked(current)
+		return
+	}
 	if !current.service.Scheduled() {
 		s.launchLocked(current)
 		return
@@ -354,8 +444,18 @@ func (s *Supervisor) launchLocked(current *unit) {
 	command.Stdout = logFile
 	command.Stderr = logFile
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	trigger := ""
+	if current.event != nil {
+		encodedEvent, _ := json.Marshal(current.event)
+		command.Stdin = bytes.NewReader(encodedEvent)
+		command.Env = append(command.Env,
+			"DJT_EVENT_SEQ="+strconv.FormatInt(current.event.Seq, 10),
+			"DJT_EVENT_TYPE="+current.event.Type,
+		)
+		trigger = fmt.Sprintf(" (event %d %s)", current.event.Seq, current.event.Type)
+	}
 	startedAt := time.Now()
-	fmt.Fprintf(logFile, "--- %s start: %s\n", startedAt.Format(time.RFC3339), service.Command)
+	fmt.Fprintf(logFile, "--- %s start%s: %s\n", startedAt.Format(time.RFC3339), trigger, service.Command)
 	if err := command.Start(); err != nil {
 		fmt.Fprintf(logFile, "--- start failed: %v\n", err)
 		logFile.Close()
@@ -368,7 +468,7 @@ func (s *Supervisor) launchLocked(current *unit) {
 	current.startedAt = startedAt
 	current.state = StateRunning
 	current.lastError = ""
-	if !service.Scheduled() {
+	if !service.Scheduled() && !service.Triggered() {
 		s.emit(service, EventStarted, map[string]any{"pid": command.Process.Pid})
 	}
 
@@ -401,6 +501,19 @@ func (s *Supervisor) afterExitLocked(current *unit, generation, exitCode int, ra
 	}
 	service := current.service
 	payload := map[string]any{"code": exitCode, "duration_ms": ranFor.Milliseconds()}
+	if service.Triggered() {
+		current.state = StateWaiting
+		if current.event != nil {
+			payload["seq"] = current.event.Seq
+			s.saveCursorLocked(current, current.event.Seq)
+			current.event = nil
+		}
+		if exitCode != 0 {
+			s.emit(service, EventFailed, payload)
+		}
+		s.runNextLocked(current)
+		return
+	}
 	if service.Scheduled() {
 		current.state = StateWaiting
 		if exitCode != 0 {
@@ -465,6 +578,8 @@ func (s *Supervisor) halt(key unitKey) {
 	}
 	process, exited := current.process, current.exited
 	current.state = StateStopped
+	current.queue = nil
+	current.event = nil
 	s.mu.Unlock()
 
 	if process == nil {
@@ -477,6 +592,97 @@ func (s *Supervisor) halt(key unitKey) {
 		syscall.Kill(-process.Pid, syscall.SIGKILL)
 		<-exited
 	}
+}
+
+// Notify hands a recorded event to the hub's triggers. It never takes the
+// supervisor lock, because the supervisor records its own events while
+// holding it; a goroutine delivers notices in order.
+func (s *Supervisor) Notify(event store.Event) {
+	attached := s.config.Attached(event.HubID)
+	s.inboxMu.Lock()
+	s.inbox = append(s.inbox, notice{event: event, attached: attached})
+	s.inboxMu.Unlock()
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (s *Supervisor) deliverNotices() {
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-s.wake:
+		}
+		s.inboxMu.Lock()
+		notices := s.inbox
+		s.inbox = nil
+		s.inboxMu.Unlock()
+		s.mu.Lock()
+		for _, pending := range notices {
+			s.deliverLocked(pending)
+		}
+		s.mu.Unlock()
+	}
+}
+
+func (s *Supervisor) deliverLocked(pending notice) {
+	for key, current := range s.units {
+		if key.hubID != pending.event.HubID || !current.service.Triggered() || current.state == StateStopped {
+			continue
+		}
+		if pending.event.Seq <= current.queuedThrough || !current.wants(pending.event) {
+			continue
+		}
+		skip := current.service.Unattached && pending.attached
+		s.enqueueLocked(current, queuedEvent{event: pending.event, skip: skip})
+		if current.process == nil {
+			s.runNextLocked(current)
+		}
+	}
+}
+
+func (current *unit) wants(event store.Event) bool {
+	return event.Type == current.service.OnType &&
+		event.Source != "svc:"+current.service.Name &&
+		match.Payload(event.Payload, current.matchers)
+}
+
+func (s *Supervisor) enqueueLocked(current *unit, queued queuedEvent) {
+	current.queue = append(current.queue, queued)
+	current.queuedThrough = queued.event.Seq
+	if len(current.queue) <= maxQueuedEvents {
+		return
+	}
+	dropped := current.queue[0]
+	current.queue = current.queue[1:]
+	if !dropped.skip {
+		s.emit(current.service, EventDropped, map[string]any{"seq": dropped.event.Seq})
+	}
+}
+
+// runNextLocked starts the next queued event. Skipped events, and events whose
+// run fails to start, only advance the cursor.
+func (s *Supervisor) runNextLocked(current *unit) {
+	for current.process == nil && len(current.queue) > 0 {
+		next := current.queue[0]
+		current.queue = current.queue[1:]
+		if !next.skip {
+			current.event = &next.event
+			s.launchLocked(current)
+			if current.process != nil {
+				return
+			}
+			current.event = nil
+		}
+		s.saveCursorLocked(current, next.event.Seq)
+	}
+}
+
+func (s *Supervisor) saveCursorLocked(current *unit, seq int64) {
+	current.service.CursorSeq = seq
+	s.config.Store.SetServiceCursor(context.Background(), current.service.HubID, current.service.Name, seq)
 }
 
 func (s *Supervisor) emit(service store.Service, eventType string, payload map[string]any) {

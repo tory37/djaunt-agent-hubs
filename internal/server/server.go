@@ -8,15 +8,16 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
+	"github.com/tory37/djaunt-agent-hubs/internal/match"
 	"github.com/tory37/djaunt-agent-hubs/internal/store"
 	"github.com/tory37/djaunt-agent-hubs/internal/supervisor"
 )
 
 const (
 	SourceHeader       = "X-Hub-Source"
+	AgentHeader        = "X-Hub-Agent"
 	defaultSource      = "agent"
 	maxRequestBytes    = 4 << 20
 	sseHeartbeat       = 25 * time.Second
@@ -31,10 +32,16 @@ type Server struct {
 	mux         *http.ServeMux
 	onHubClosed []HubClosedHook
 	supervisor  *supervisor.Supervisor
+	attachments *attachments
 }
 
 func New(hubStore *store.Store, webAssets http.Handler) *Server {
-	server := &Server{store: hubStore, broker: NewBroker(), mux: http.NewServeMux()}
+	server := &Server{
+		store:       hubStore,
+		broker:      NewBroker(),
+		mux:         http.NewServeMux(),
+		attachments: newAttachments(DefaultAttachGrace),
+	}
 	server.routes(webAssets)
 	return server
 }
@@ -99,10 +106,11 @@ func (s *Server) createHub(w http.ResponseWriter, r *http.Request) {
 }
 
 type HubSnapshot struct {
-	Hub     store.Hub      `json:"hub"`
-	Blocks  []store.Block  `json:"blocks"`
-	State   map[string]any `json:"state"`
-	LastSeq int64          `json:"last_seq"`
+	Hub      store.Hub      `json:"hub"`
+	Blocks   []store.Block  `json:"blocks"`
+	State    map[string]any `json:"state"`
+	LastSeq  int64          `json:"last_seq"`
+	Attached bool           `json:"attached"`
 }
 
 func (s *Server) snapshot(ctx context.Context, hubID string) (HubSnapshot, error) {
@@ -122,7 +130,7 @@ func (s *Server) snapshot(ctx context.Context, hubID string) (HubSnapshot, error
 	if err != nil {
 		return HubSnapshot{}, err
 	}
-	return HubSnapshot{Hub: hub, Blocks: blocks, State: document, LastSeq: lastSeq}, nil
+	return HubSnapshot{Hub: hub, Blocks: blocks, State: document, LastSeq: lastSeq, Attached: s.Attached(hubID)}, nil
 }
 
 func (s *Server) getHub(w http.ResponseWriter, r *http.Request) {
@@ -297,12 +305,11 @@ func (s *Server) emitEvent(w http.ResponseWriter, r *http.Request) {
 	if source == "" {
 		source = defaultSource
 	}
-	event, err := s.store.AppendEvent(r.Context(), hubID, source, request.Type, request.Payload)
+	event, err := s.recordEvent(r.Context(), hubID, source, request.Type, request.Payload)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	s.publish(hubID, MessageEvent, event.Seq, event)
 	writeJSON(w, http.StatusCreated, event)
 }
 
@@ -327,6 +334,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 
 	live, unsubscribe := s.broker.Subscribe(hubID)
 	defer unsubscribe()
+	defer s.attach(r, hubID)()
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -386,9 +394,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 func (s *Server) wait(w http.ResponseWriter, r *http.Request) {
 	hubID := r.PathValue("hub")
 	query := r.URL.Query()
-	matchers, err := parseMatchers(query["match"])
+	matchers, err := match.Parse(query["match"])
 	if err != nil {
-		writeError(w, err)
+		writeError(w, fmt.Errorf("%w: %v", store.ErrInvalidInput, err))
 		return
 	}
 	timeout := defaultWaitTimeout
@@ -402,6 +410,7 @@ func (s *Server) wait(w http.ResponseWriter, r *http.Request) {
 
 	live, unsubscribe := s.broker.Subscribe(hubID)
 	defer func() { unsubscribe() }()
+	defer s.attach(r, hubID)()
 
 	afterSeq, err := s.store.LastEventSeq(r.Context(), hubID)
 	if err != nil {
@@ -426,7 +435,7 @@ func (s *Server) wait(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for _, event := range events {
-			if payloadMatches(event.Payload, matchers) {
+			if match.Payload(event.Payload, matchers) {
 				writeJSON(w, http.StatusOK, event)
 				return
 			}
@@ -500,40 +509,6 @@ func eventMatchesType(message Message, wantedType string) bool {
 	}
 	json.Unmarshal(message.Data, &event)
 	return event.Type == wantedType
-}
-
-type payloadMatcher struct {
-	key   string
-	value string
-}
-
-func parseMatchers(rawMatchers []string) ([]payloadMatcher, error) {
-	matchers := make([]payloadMatcher, 0, len(rawMatchers))
-	for _, raw := range rawMatchers {
-		key, value, hasEquals := strings.Cut(raw, "=")
-		if !hasEquals || key == "" {
-			return nil, fmt.Errorf("%w: match %q must be key=value", store.ErrInvalidInput, raw)
-		}
-		matchers = append(matchers, payloadMatcher{key: key, value: value})
-	}
-	return matchers, nil
-}
-
-func payloadMatches(payload json.RawMessage, matchers []payloadMatcher) bool {
-	if len(matchers) == 0 {
-		return true
-	}
-	var document map[string]any
-	if err := json.Unmarshal(payload, &document); err != nil {
-		return false
-	}
-	for _, matcher := range matchers {
-		value, err := stateValue(document, matcher.key)
-		if err != nil || fmt.Sprint(value) != matcher.value {
-			return false
-		}
-	}
-	return true
 }
 
 func readJSON(r *http.Request, target any) error {

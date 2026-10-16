@@ -182,3 +182,51 @@ func TestCloseRunsHooksAndBlocksWrites(t *testing.T) {
 		t.Fatalf("want 409 on archived hub, got %v", err)
 	}
 }
+
+func TestAgentListenersAttachTheHubThroughTheGracePeriod(t *testing.T) {
+	hubStore, err := store.Open(filepath.Join(t.TempDir(), "hub.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hubServer := server.New(hubStore, nil)
+	hubServer.SetAttachGrace(150 * time.Millisecond)
+	httpServer := httptest.NewServer(hubServer)
+	t.Cleanup(func() {
+		httpServer.Close()
+		hubStore.Close()
+	})
+	agent := client.New(httpServer.URL, "agent")
+	service := client.New(httpServer.URL, "svc:watch")
+	mustDo(t, agent, http.MethodPost, "/api/hubs", map[string]string{"id": "h"}, nil)
+
+	browser, err := http.Get(httpServer.URL + "/api/hubs/h/stream")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer browser.Body.Close()
+	go service.Wait(context.Background(), "h", client.WaitOptions{Type: "never", Timeout: "300ms"})
+	time.Sleep(50 * time.Millisecond)
+	if hubServer.Attached("h") {
+		t.Fatal("a browser stream or a service wait must not attach the hub")
+	}
+
+	waitDone := make(chan struct{})
+	go func() {
+		agent.Wait(context.Background(), "h", client.WaitOptions{Type: "never", Timeout: "200ms"})
+		close(waitDone)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	var snapshot server.HubSnapshot
+	mustDo(t, agent, http.MethodGet, client.HubPath("h"), nil, &snapshot)
+	if !snapshot.Attached {
+		t.Fatal("hub must be attached while an agent waits")
+	}
+	<-waitDone
+	if !hubServer.Attached("h") {
+		t.Fatal("hub must stay attached through the grace period")
+	}
+	time.Sleep(200 * time.Millisecond)
+	if hubServer.Attached("h") {
+		t.Fatal("hub must detach after the grace period")
+	}
+}

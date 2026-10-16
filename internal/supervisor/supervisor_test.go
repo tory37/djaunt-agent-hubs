@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -25,6 +26,7 @@ type harness struct {
 	mu         sync.Mutex
 	events     []recordedEvent
 	supervisor *supervisor.Supervisor
+	attached   atomic.Bool
 }
 
 func newHarness(t *testing.T) *harness {
@@ -54,6 +56,7 @@ func (h *harness) newSupervisor() *supervisor.Supervisor {
 		MinBackoff:  10 * time.Millisecond,
 		MaxBackoff:  40 * time.Millisecond,
 		StopTimeout: time.Second,
+		Attached:    func(string) bool { return h.attached.Load() },
 		Events: func(_ context.Context, hubID, source, eventType string, _ any) {
 			h.mu.Lock()
 			defer h.mu.Unlock()
@@ -94,6 +97,25 @@ func (h *harness) countEvents(eventType string) int {
 		}
 	}
 	return count
+}
+
+// record appends an event the way the server does: log it, then notify.
+func (h *harness) record(source, eventType, payload string) store.Event {
+	h.t.Helper()
+	event, err := h.store.AppendEvent(context.Background(), "h", source, eventType, []byte(payload))
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	h.supervisor.Notify(event)
+	return event
+}
+
+func countLines(path string) int {
+	content, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	return strings.Count(string(content), "\n")
 }
 
 func eventually(t *testing.T, what string, condition func() bool) {
@@ -272,5 +294,135 @@ func TestTailLines(t *testing.T) {
 	}
 	if text, _, _ := supervisor.TailLines(filepath.Join(t.TempDir(), "missing"), 5); text != "" {
 		t.Fatalf("missing file text = %q", text)
+	}
+}
+
+func TestTriggerRunsOncePerMatchingEventWithEventOnStdin(t *testing.T) {
+	h := newHarness(t)
+	out := filepath.Join(h.dir, "out")
+	h.record("user", "gate.approve", `{"step":"promote"}`)
+	h.add(store.Service{
+		Name:    "gate",
+		Command: `{ cat; echo " $DJT_EVENT_TYPE $DJT_EVENT_SEQ"; } >> ` + out,
+		OnType:  "gate.approve",
+		OnMatch: []string{"step=promote"},
+	})
+	h.record("user", "gate.approve", `{"step":"build"}`)
+	h.record("user", "gate.reject", `{"step":"promote"}`)
+	want := h.record("user", "gate.approve", `{"step":"promote","note":"ship"}`)
+
+	eventually(t, "trigger run", func() bool { return h.status("gate").CursorSeq == want.Seq })
+	content, _ := os.ReadFile(out)
+	if countLines(out) != 1 || !strings.Contains(string(content), `"note":"ship"`) ||
+		!strings.Contains(string(content), " gate.approve "+strconv.FormatInt(want.Seq, 10)) {
+		t.Fatalf("out:\n%s", content)
+	}
+	if status := h.status("gate"); status.State != supervisor.StateWaiting || status.Restart != store.RestartNever {
+		t.Fatalf("status = %+v", status)
+	}
+}
+
+func TestTriggerIgnoresItsOwnEvents(t *testing.T) {
+	h := newHarness(t)
+	out := filepath.Join(h.dir, "out")
+	h.add(store.Service{Name: "echo", Command: "echo . >> " + out, OnType: "ping"})
+	h.record("svc:echo", "ping", `{}`)
+	last := h.record("svc:other", "ping", `{}`)
+	eventually(t, "cursor", func() bool { return h.status("echo").CursorSeq == last.Seq })
+	if runs := countLines(out); runs != 1 {
+		t.Fatalf("runs = %d, want 1", runs)
+	}
+}
+
+func TestTriggerRunsEventsOneAtATimeInOrder(t *testing.T) {
+	h := newHarness(t)
+	out := filepath.Join(h.dir, "out")
+	lock := filepath.Join(h.dir, "lock")
+	h.add(store.Service{
+		Name:    "serial",
+		Command: "mkdir " + lock + " || exit 9; sleep 0.05; echo $DJT_EVENT_SEQ >> " + out + "; rmdir " + lock,
+		OnType:  "tick",
+	})
+	var seqs []string
+	for range 3 {
+		seqs = append(seqs, strconv.FormatInt(h.record("user", "tick", `{}`).Seq, 10))
+	}
+	eventually(t, "three runs", func() bool { return countLines(out) == 3 })
+	content, _ := os.ReadFile(out)
+	if got := strings.Fields(string(content)); strings.Join(got, ",") != strings.Join(seqs, ",") {
+		t.Fatalf("order = %v, want %v", got, seqs)
+	}
+	if failed := h.countEvents(supervisor.EventFailed); failed != 0 {
+		t.Fatalf("failed runs = %d", failed)
+	}
+}
+
+func TestUnattachedTriggerSkipsWhileAnAgentListens(t *testing.T) {
+	h := newHarness(t)
+	out := filepath.Join(h.dir, "out")
+	h.add(store.Service{Name: "fallback", Command: "echo . >> " + out, OnType: "gate.approve", Unattached: true})
+
+	h.attached.Store(true)
+	skipped := h.record("user", "gate.approve", `{}`)
+	eventually(t, "skip advances cursor", func() bool { return h.status("fallback").CursorSeq == skipped.Seq })
+	if runs := countLines(out); runs != 0 {
+		t.Fatalf("ran %d times while attached", runs)
+	}
+
+	h.attached.Store(false)
+	h.record("user", "gate.approve", `{}`)
+	eventually(t, "run when unattached", func() bool { return countLines(out) == 1 })
+}
+
+func TestTriggerReplaysEventsMissedWhileDaemonWasDown(t *testing.T) {
+	h := newHarness(t)
+	out := filepath.Join(h.dir, "out")
+	h.add(store.Service{Name: "late", Command: "echo . >> " + out, OnType: "gate.approve"})
+	h.supervisor.Shutdown()
+
+	ctx := context.Background()
+	if _, err := h.store.AppendEvent(ctx, "h", "user", "gate.approve", []byte(`{}`)); err != nil {
+		t.Fatal(err)
+	}
+	h.supervisor = h.newSupervisor()
+	if err := h.supervisor.Restore(ctx); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "replayed run", func() bool { return countLines(out) == 1 })
+}
+
+func TestStartedTriggerIgnoresEventsFromWhileItWasStopped(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	out := filepath.Join(h.dir, "out")
+	h.add(store.Service{Name: "paused", Command: "echo . >> " + out, OnType: "tick"})
+	if _, err := h.supervisor.Stop(ctx, "h", "paused"); err != nil {
+		t.Fatal(err)
+	}
+	h.record("user", "tick", `{}`)
+	if _, err := h.supervisor.Start(ctx, "h", "paused"); err != nil {
+		t.Fatal(err)
+	}
+	h.record("user", "tick", `{}`)
+	eventually(t, "one run", func() bool { return countLines(out) == 1 })
+	time.Sleep(50 * time.Millisecond)
+	if runs := countLines(out); runs != 1 {
+		t.Fatalf("runs = %d, want 1", runs)
+	}
+}
+
+func TestTriggerValidation(t *testing.T) {
+	h := newHarness(t)
+	for name, service := range map[string]store.Service{
+		"on-and-every":       {OnType: "x", Every: store.Interval(time.Second)},
+		"on-and-restart":     {OnType: "x", Restart: store.RestartAlways},
+		"unattached-without": {Unattached: true},
+		"match-without-on":   {OnMatch: []string{"a=b"}},
+		"bad-match":          {OnType: "x", OnMatch: []string{"nokey"}},
+	} {
+		service.HubID, service.Name, service.Command, service.Workdir = "h", name, "true", h.dir
+		if _, err := h.supervisor.Add(context.Background(), service); !errors.Is(err, store.ErrInvalidInput) {
+			t.Errorf("%s: err = %v, want invalid input", name, err)
+		}
 	}
 }

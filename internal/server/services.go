@@ -29,17 +29,27 @@ func (s *Server) AttachSupervisor(services *supervisor.Supervisor) {
 	s.OnHubClosed(func(ctx context.Context, hubID string) { services.StopHub(hubID) })
 }
 
-// RecordEvent appends an event and pushes it to live viewers.
+// RecordEvent is the supervisor's event sink.
 func (s *Server) RecordEvent(ctx context.Context, hubID, source, eventType string, payload any) {
 	encoded, err := json.Marshal(payload)
 	if err != nil {
 		return
 	}
-	event, err := s.store.AppendEvent(ctx, hubID, source, eventType, encoded)
+	s.recordEvent(ctx, hubID, source, eventType, encoded)
+}
+
+// recordEvent is the one path every event takes: append to the log, push to
+// live viewers, then hand it to triggered services.
+func (s *Server) recordEvent(ctx context.Context, hubID, source, eventType string, payload json.RawMessage) (store.Event, error) {
+	event, err := s.store.AppendEvent(ctx, hubID, source, eventType, payload)
 	if err != nil {
-		return
+		return store.Event{}, err
 	}
 	s.publish(hubID, MessageEvent, event.Seq, event)
+	if s.supervisor != nil {
+		s.supervisor.Notify(event)
+	}
+	return event, nil
 }
 
 func (s *Server) serviceRoutes() {
@@ -69,26 +79,32 @@ func (s *Server) listServices(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) addService(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		Name    string            `json:"name"`
-		Command string            `json:"command"`
-		Workdir string            `json:"workdir"`
-		Env     map[string]string `json:"env"`
-		Every   string            `json:"every"`
-		Cron    string            `json:"cron"`
-		Restart string            `json:"restart"`
+		Name       string            `json:"name"`
+		Command    string            `json:"command"`
+		Workdir    string            `json:"workdir"`
+		Env        map[string]string `json:"env"`
+		Every      string            `json:"every"`
+		Cron       string            `json:"cron"`
+		Restart    string            `json:"restart"`
+		On         string            `json:"on"`
+		Match      []string          `json:"match"`
+		Unattached bool              `json:"unattached"`
 	}
 	if err := readJSON(r, &request); err != nil {
 		writeError(w, err)
 		return
 	}
 	service := store.Service{
-		HubID:   r.PathValue("hub"),
-		Name:    request.Name,
-		Command: request.Command,
-		Workdir: request.Workdir,
-		Env:     request.Env,
-		Cron:    request.Cron,
-		Restart: request.Restart,
+		HubID:      r.PathValue("hub"),
+		Name:       request.Name,
+		Command:    request.Command,
+		Workdir:    request.Workdir,
+		Env:        request.Env,
+		Cron:       request.Cron,
+		Restart:    request.Restart,
+		OnType:     request.On,
+		OnMatch:    request.Match,
+		Unattached: request.Unattached,
 	}
 	if request.Every != "" {
 		every, err := time.ParseDuration(request.Every)

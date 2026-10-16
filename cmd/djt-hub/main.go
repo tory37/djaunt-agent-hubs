@@ -14,7 +14,8 @@ import (
 const usageText = `djt-hub — live local hubs for agents
 
 Daemon
-  serve [--addr A] [--data DIR]        run the daemon (launchd runs this)
+  serve [--addr A] [--data DIR] [--attach-grace 2m]
+                                       run the daemon (launchd runs this)
   status                               exit 0 if the daemon answers
   install [--addr A] [--data DIR]      run the daemon under launchd (macOS)
   uninstall                            remove the launchd agent; keeps data
@@ -45,8 +46,10 @@ Events
 
 Services (supervised; survive agent exit; stopped on close)
   svc add <hub> <name> [--every 30s | --cron "*/5 * * * *"]
+          [--on TYPE [--match k=v]... [--unattached]]
           [--restart never|on-failure|always] [--cwd DIR] [--env K=V]...
           -- <command...>              one arg runs as a shell script
+          --on runs once per matching event, event JSON on stdin
   svc ls <hub>                         services with state, pid, next run
   svc show|start|stop|rm <hub> <name>
   svc logs <hub> <name> [--tail N] [--follow]

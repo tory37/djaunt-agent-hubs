@@ -93,7 +93,8 @@ An event is `{"seq", "hub", "source", "type", "payload", "ts"}`. `source` is
 | `action` | `{block, action}` |
 | `form.submit` | `{block, values:{name: value}}` |
 | `checklist.toggle` | `{block, item, done}` |
-| `svc.started` / `svc.exited` / `svc.failed` | `{pid}` / `{code, duration_ms}` / `{code, duration_ms}` or `{error}` |
+| `svc.started` / `svc.exited` / `svc.failed` | `{pid}` / `{code, duration_ms}` / `{code, duration_ms}` or `{error}`; triggers add `seq` |
+| `svc.dropped` | `{seq}`: a trigger's queue passed 100 events and dropped the oldest |
 
 html blocks and `emit <hub> <type> [json]` can add any type.
 
@@ -140,6 +141,28 @@ djt-hub svc stop|start|show|rm release-42 tail
 - Output goes to `~/.local/share/djt-hub/logs/<hub>/<svc>.log`.
 - Scheduled runs emit `svc.failed` only on failure. Long-running services also emit
   `svc.started` and `svc.exited`.
+
+### Triggers
+
+`--on TYPE` runs the command once per matching event instead of on a schedule.
+
+```sh
+djt-hub svc add release-42 on-reject --on gate.reject --match step=promote -- ./rollback.sh
+```
+
+- The event JSON arrives on stdin. `$DJT_EVENT_SEQ` and `$DJT_EVENT_TYPE` are set too.
+- `--match k=v` filters on the payload, the same way `wait` does.
+- Runs are one at a time, in event order. A trigger never fires on its own events.
+- `--unattached` skips events while a CLI agent is listening. See below.
+- A trigger reacts only to events after it was added or started. Events logged while the
+  daemon was down still run on the next boot.
+- A failed run emits `svc.failed` with the event `seq`.
+
+### Attached agents
+
+`wait` and `events --follow` mark the hub as attached. It stays attached for 2m after the
+last one disconnects, so a click between two `wait` calls stays yours. `show` reports
+`attached`. Browser tabs and services never attach a hub.
 
 ## Conventions
 

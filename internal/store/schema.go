@@ -1,7 +1,5 @@
 package store
 
-const schemaVersion = 1
-
 const schemaV1 = `
 CREATE TABLE hubs (
 	id         TEXT PRIMARY KEY,
@@ -49,3 +47,15 @@ CREATE TABLE services (
 	PRIMARY KEY (hub_id, name)
 );
 `
+
+// schemaV2 adds event triggers: a service with on_type runs once per matching
+// event, and cursor_seq records the last event it handled.
+const schemaV2 = `
+ALTER TABLE services ADD COLUMN on_type TEXT NOT NULL DEFAULT '';
+ALTER TABLE services ADD COLUMN on_match TEXT NOT NULL DEFAULT '[]';
+ALTER TABLE services ADD COLUMN unattached INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE services ADD COLUMN cursor_seq INTEGER NOT NULL DEFAULT 0;
+`
+
+// migrations[i] moves the schema from version i to i+1.
+var migrations = []string{schemaV1, schemaV2}

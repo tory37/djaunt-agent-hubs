@@ -37,11 +37,15 @@ func runService(ctx context.Context, args []string) error {
 }
 
 func runServiceAdd(ctx context.Context, args []string) error {
-	var every, cronExpression, restart, workdir string
-	var envAssignments stringList
+	var every, cronExpression, restart, workdir, onType string
+	var envAssignments, matchers stringList
+	var unattached bool
 	hubID, positionals, err := hubCommand("svc add", args, func(flags *flag.FlagSet) {
 		flags.StringVar(&every, "every", "", "run on an interval, e.g. 30s")
 		flags.StringVar(&cronExpression, "cron", "", "run on a 5-field cron schedule")
+		flags.StringVar(&onType, "on", "", "run once per event of this type; the event JSON is on stdin")
+		flags.Var(&matchers, "match", "with --on, payload key=value (dotted keys ok); repeatable")
+		flags.BoolVar(&unattached, "unattached", false, "with --on, skip events while a CLI agent listens")
 		flags.StringVar(&restart, "restart", "", "never|on-failure|always (default on-failure)")
 		flags.StringVar(&workdir, "cwd", "", "working directory (default current)")
 		flags.Var(&envAssignments, "env", "KEY=VALUE, repeatable")
@@ -50,7 +54,7 @@ func runServiceAdd(ctx context.Context, args []string) error {
 		return err
 	}
 	if len(positionals) < 2 {
-		return fmt.Errorf("%w: svc add <hub> <name> [--every D|--cron EXPR] [--restart P] [--cwd DIR] [--env K=V]... -- <command>", errUsage)
+		return fmt.Errorf("%w: svc add <hub> <name> [--every D|--cron EXPR|--on TYPE [--match k=v]... [--unattached]] [--restart P] [--cwd DIR] [--env K=V]... -- <command>", errUsage)
 	}
 	if workdir == "" {
 		workdir, err = os.Getwd()
@@ -69,13 +73,16 @@ func runServiceAdd(ctx context.Context, args []string) error {
 		env[key] = value
 	}
 	request := map[string]any{
-		"name":    positionals[0],
-		"command": shellCommand(positionals[1:]),
-		"workdir": workdir,
-		"env":     env,
-		"every":   every,
-		"cron":    cronExpression,
-		"restart": restart,
+		"name":       positionals[0],
+		"command":    shellCommand(positionals[1:]),
+		"workdir":    workdir,
+		"env":        env,
+		"every":      every,
+		"cron":       cronExpression,
+		"restart":    restart,
+		"on":         onType,
+		"match":      matchers,
+		"unattached": unattached,
 	}
 	return doAndPrint(ctx, http.MethodPost, client.HubPath(hubID, "services"), request)
 }

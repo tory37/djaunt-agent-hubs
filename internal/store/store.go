@@ -92,14 +92,27 @@ func (s *Store) migrate() error {
 	if err := s.db.QueryRow(`PRAGMA user_version`).Scan(&currentVersion); err != nil {
 		return err
 	}
-	if currentVersion >= schemaVersion {
-		return nil
+	for version := currentVersion; version < len(migrations); version++ {
+		if err := s.applyMigration(version); err != nil {
+			return fmt.Errorf("migrate schema to v%d: %w", version+1, err)
+		}
 	}
-	if _, err := s.db.Exec(schemaV1); err != nil {
-		return fmt.Errorf("apply schema: %w", err)
+	return nil
+}
+
+func (s *Store) applyMigration(fromVersion int) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
 	}
-	_, err := s.db.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, schemaVersion))
-	return err
+	defer tx.Rollback()
+	if _, err := tx.Exec(migrations[fromVersion]); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(fmt.Sprintf(`PRAGMA user_version = %d`, fromVersion+1)); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func ValidateIdentifier(kind, value string) error {

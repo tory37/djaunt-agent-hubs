@@ -203,8 +203,9 @@ func TestCLIUnknownCommand(t *testing.T) {
 }
 
 type serviceStatus struct {
-	State string `json:"state"`
-	PID   int    `json:"pid"`
+	State  string `json:"state"`
+	PID    int    `json:"pid"`
+	Cursor int64  `json:"cursor"`
 }
 
 func (d *daemon) service(hubID, name string) serviceStatus {
@@ -281,4 +282,35 @@ func TestCLIDaemonRestartRestoresServices(t *testing.T) {
 	}
 	second.mustRun("svc", "rm", "h", "watcher")
 	eventually(t, "removed service exit", func() bool { return !processAlive(after.PID) })
+}
+
+func TestCLITriggerRunsOnClicksOnlyWhileNoAgentListens(t *testing.T) {
+	hub := startDaemon(t)
+	out := filepath.Join(t.TempDir(), "out")
+	hub.mustRun("create", "h")
+	hub.mustRun("svc", "add", "h", "fallback", "--on", "gate.approve", "--match", "step=promote", "--unattached",
+		"--", "cat >> "+out+"; echo >> "+out)
+
+	hub.mustRun("emit", "h", "gate.approve", `{"step":"build"}`)
+	hub.mustRun("emit", "h", "gate.approve", `{"step":"promote"}`)
+	eventually(t, "trigger run", func() bool {
+		content, _ := os.ReadFile(out)
+		return strings.Contains(string(content), `"step":"promote"`)
+	})
+
+	listener := hub.command("wait", "h", "--type", "never", "--timeout", "10s")
+	if err := listener.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { listener.Process.Kill(); listener.Wait() })
+	eventually(t, "hub attached", func() bool { return strings.Contains(hub.mustRun("show", "h"), `"attached": true`) })
+
+	var emitted struct {
+		Seq int64 `json:"seq"`
+	}
+	json.Unmarshal([]byte(hub.mustRun("emit", "h", "gate.approve", `{"step":"promote","note":"live"}`)), &emitted)
+	eventually(t, "skip advances cursor", func() bool { return hub.service("h", "fallback").Cursor == emitted.Seq })
+	if content, _ := os.ReadFile(out); strings.Contains(string(content), "live") {
+		t.Fatalf("trigger ran while an agent listened:\n%s", content)
+	}
 }

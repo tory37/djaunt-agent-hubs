@@ -33,6 +33,7 @@ func runServe(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("serve", flag.ContinueOnError)
 	address := flags.String("addr", daemonAddress(), "listen address (loopback only)")
 	dataDirectory := flags.String("data", dataDir(), "data directory")
+	attachGrace := flags.Duration("attach-grace", server.DefaultAttachGrace, "how long a hub stays attached after its last agent listener leaves")
 	if _, err := parseArgs(flags, args); err != nil {
 		return err
 	}
@@ -47,6 +48,7 @@ func runServe(ctx context.Context, args []string) error {
 	defer hubStore.Close()
 
 	hubServer := server.New(hubStore, web.Handler())
+	hubServer.SetAttachGrace(*attachGrace)
 	listener, err := net.Listen("tcp", *address)
 	if err != nil {
 		return err
@@ -56,6 +58,7 @@ func runServe(ctx context.Context, args []string) error {
 		LogDir:     filepath.Join(*dataDirectory, "logs"),
 		HubAddress: listener.Addr().String(),
 		Events:     hubServer.RecordEvent,
+		Attached:   hubServer.Attached,
 	})
 	hubServer.AttachSupervisor(services)
 	defer services.Shutdown()

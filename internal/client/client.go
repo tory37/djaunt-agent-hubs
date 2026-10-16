@@ -52,7 +52,13 @@ func HubPath(hubID string, suffix ...string) string {
 // Do sends body as JSON (raw bytes pass through untouched) and decodes the
 // response into out when out is non-nil.
 func (c *Client) Do(ctx context.Context, method, path string, body any, out any) error {
-	response, err := c.send(ctx, method, path, body)
+	return c.do(ctx, method, path, body, out, false)
+}
+
+// do marks the request as an attached agent when asAgent is set, so the
+// daemon holds back daemon agents while this caller listens.
+func (c *Client) do(ctx context.Context, method, path string, body any, out any, asAgent bool) error {
+	response, err := c.send(ctx, method, path, body, asAgent)
 	if err != nil {
 		return err
 	}
@@ -60,7 +66,7 @@ func (c *Client) Do(ctx context.Context, method, path string, body any, out any)
 	return decodeResponse(response, out)
 }
 
-func (c *Client) send(ctx context.Context, method, path string, body any) (*http.Response, error) {
+func (c *Client) send(ctx context.Context, method, path string, body any, asAgent bool) (*http.Response, error) {
 	var requestBody io.Reader
 	switch typed := body.(type) {
 	case nil:
@@ -81,6 +87,9 @@ func (c *Client) send(ctx context.Context, method, path string, body any) (*http
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set(server.SourceHeader, c.source)
+	if asAgent {
+		request.Header.Set(server.AgentHeader, "1")
+	}
 	response, err := c.http.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("djt-hub daemon unreachable at %s (run `djt-hub serve` or `djt-hub install`): %w", c.baseURL, err)
@@ -129,7 +138,7 @@ func (c *Client) Wait(ctx context.Context, hubID string, options WaitOptions) (j
 		query.Add("match", matcher)
 	}
 	var event json.RawMessage
-	err := c.Do(ctx, http.MethodGet, HubPath(hubID, "wait")+"?"+query.Encode(), nil, &event)
+	err := c.do(ctx, http.MethodGet, HubPath(hubID, "wait")+"?"+query.Encode(), nil, &event, true)
 	var apiError *APIError
 	if errors.As(err, &apiError) && apiError.Status == http.StatusRequestTimeout {
 		return nil, ErrWaitTimedOut
@@ -149,7 +158,7 @@ func (c *Client) Stream(ctx context.Context, hubID string, afterSeq int64, event
 	query := url.Values{}
 	query.Set("since", strconv.FormatInt(afterSeq, 10))
 	setIfPresent(query, "type", eventType)
-	response, err := c.send(ctx, http.MethodGet, HubPath(hubID, "stream")+"?"+query.Encode(), nil)
+	response, err := c.send(ctx, http.MethodGet, HubPath(hubID, "stream")+"?"+query.Encode(), nil, true)
 	if err != nil {
 		return afterSeq, err
 	}
@@ -196,7 +205,7 @@ func setIfPresent(query url.Values, key, value string) {
 // CopyText streams a plain-text response body to w until it ends or ctx is
 // canceled.
 func (c *Client) CopyText(ctx context.Context, path string, w io.Writer) error {
-	response, err := c.send(ctx, http.MethodGet, path, nil)
+	response, err := c.send(ctx, http.MethodGet, path, nil, false)
 	if err != nil {
 		return err
 	}
