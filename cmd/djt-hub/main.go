@@ -40,6 +40,16 @@ Events
   events <hub> [--since N] [--type T] [--follow] [--all-kinds]
   wait <hub> [--type T] [--match k=v]... [--since N] [--timeout 30m]
 
+Services (supervised; survive agent exit; stopped on close)
+  svc add <hub> <name> [--every 30s | --cron "*/5 * * * *"]
+          [--restart never|on-failure|always] [--cwd DIR] [--env K=V]...
+          -- <command...>              one arg runs as a shell script
+  svc ls <hub>                         services with state, pid, next run
+  svc show|start|stop|rm <hub> <name>
+  svc logs <hub> <name> [--tail N] [--follow]
+  Services get $DJT_HUB_ID, $DJT_HUB_ADDR, $DJT_SVC, so plain
+  "djt-hub patch a=1" or "djt-hub emit t" inside one targets its hub.
+
 Hub resolution: --hub, then $DJT_HUB_ID, then the first argument.
 Daemon address: $DJT_HUB_ADDR (default 127.0.0.1:7717).
 `
@@ -61,6 +71,7 @@ var commands = map[string]command{
 	"emit":   runEmit,
 	"events": runEvents,
 	"wait":   runWait,
+	"svc":    runService,
 }
 
 const (

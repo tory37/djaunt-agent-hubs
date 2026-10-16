@@ -20,6 +20,7 @@ import (
 	"github.com/tory37/djaunt-agent-hubs/internal/client"
 	"github.com/tory37/djaunt-agent-hubs/internal/server"
 	"github.com/tory37/djaunt-agent-hubs/internal/store"
+	"github.com/tory37/djaunt-agent-hubs/internal/supervisor"
 	"github.com/tory37/djaunt-agent-hubs/web"
 )
 
@@ -49,6 +50,17 @@ func runServe(ctx context.Context, args []string) error {
 	listener, err := net.Listen("tcp", *address)
 	if err != nil {
 		return err
+	}
+	services := supervisor.New(supervisor.Config{
+		Store:      hubStore,
+		LogDir:     filepath.Join(*dataDirectory, "logs"),
+		HubAddress: listener.Addr().String(),
+		Events:     hubServer.RecordEvent,
+	})
+	hubServer.AttachSupervisor(services)
+	defer services.Shutdown()
+	if err := services.Restore(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "djt-hub: restoring services: %v\n", err)
 	}
 	httpServer := &http.Server{Handler: hubServer, ReadHeaderTimeout: 10 * time.Second}
 	fmt.Fprintf(os.Stderr, "djt-hub serving http://%s (data %s)\n", listener.Addr(), *dataDirectory)

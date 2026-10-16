@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -53,8 +54,13 @@ func (list *stringList) Set(value string) error { *list = append(*list, value); 
 
 // parseArgs lets flags appear anywhere among positionals, so agents can write
 // `wait release-42 --type gate.approve` as naturally as the reverse.
+// Everything after a bare "--" is kept verbatim as positionals.
 func parseArgs(flags *flag.FlagSet, args []string) ([]string, error) {
 	flags.SetOutput(io.Discard)
+	var verbatim []string
+	if separator := slices.Index(args, "--"); separator >= 0 {
+		args, verbatim = args[:separator], args[separator+1:]
+	}
 	var positionals []string
 	for {
 		if err := flags.Parse(args); err != nil {
@@ -62,7 +68,7 @@ func parseArgs(flags *flag.FlagSet, args []string) ([]string, error) {
 		}
 		remaining := flags.Args()
 		if len(remaining) == 0 {
-			return positionals, nil
+			return append(positionals, verbatim...), nil
 		}
 		positionals = append(positionals, remaining[0])
 		args = remaining[1:]

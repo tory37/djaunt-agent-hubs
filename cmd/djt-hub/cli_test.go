@@ -9,6 +9,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -34,9 +36,12 @@ func TestMain(m *testing.M) {
 type daemon struct {
 	t       *testing.T
 	address string
+	stop    func()
 }
 
-func startDaemon(t *testing.T) *daemon {
+func startDaemon(t *testing.T) *daemon { return startDaemonIn(t, t.TempDir()) }
+
+func startDaemonIn(t *testing.T, dataDirectory string) *daemon {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -45,16 +50,20 @@ func startDaemon(t *testing.T) *daemon {
 	address := listener.Addr().String()
 	listener.Close()
 
-	serve := exec.Command(cliBinary, "serve", "--addr", address, "--data", t.TempDir())
+	serve := exec.Command(cliBinary, "serve", "--addr", address, "--data", dataDirectory)
 	if err := serve.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		serve.Process.Signal(os.Interrupt)
-		serve.Wait()
-	})
+	var stopOnce sync.Once
+	stop := func() {
+		stopOnce.Do(func() {
+			serve.Process.Signal(os.Interrupt)
+			serve.Wait()
+		})
+	}
+	t.Cleanup(stop)
 
-	hub := &daemon{t: t, address: address}
+	hub := &daemon{t: t, address: address, stop: stop}
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if _, err := hub.run("status"); err == nil {
@@ -191,4 +200,85 @@ func TestCLIUnknownCommand(t *testing.T) {
 	if exitError, isExitError := err.(*exec.ExitError); !isExitError || exitError.ExitCode() != exitUsage {
 		t.Fatalf("want usage exit, got %v", err)
 	}
+}
+
+type serviceStatus struct {
+	State string `json:"state"`
+	PID   int    `json:"pid"`
+}
+
+func (d *daemon) service(hubID, name string) serviceStatus {
+	d.t.Helper()
+	var status serviceStatus
+	if err := json.Unmarshal([]byte(d.mustRun("svc", "show", hubID, name)), &status); err != nil {
+		d.t.Fatal(err)
+	}
+	return status
+}
+
+func eventually(t *testing.T, what string, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}
+
+func processAlive(pid int) bool { return syscall.Kill(pid, 0) == nil }
+
+func TestCLIServicePushesIntoHubAndStopsOnClose(t *testing.T) {
+	hub := startDaemon(t)
+	hub.mustRun("create", "h")
+	hub.mustRun("svc", "add", "h", "ticker", "--every", "200ms", "--", "djt-hub", "emit", "tick", `{"n":1}`)
+	hub.mustRun("svc", "add", "h", "watcher", "--", "sleep 30")
+
+	waitOutput := hub.mustRun("wait", "h", "--type", "tick", "--timeout", "10s")
+	if !strings.Contains(waitOutput, `"source":"svc:ticker"`) {
+		t.Fatalf("wait output: %s", waitOutput)
+	}
+	if logText := hub.mustRun("svc", "logs", "h", "ticker", "--tail", "5"); !strings.Contains(logText, "exit 0") {
+		t.Fatalf("logs: %s", logText)
+	}
+	watcher := hub.service("h", "watcher")
+	if watcher.State != "running" || watcher.PID == 0 {
+		t.Fatalf("watcher: %+v", watcher)
+	}
+
+	hub.mustRun("close", "h")
+	eventually(t, "watcher exit", func() bool { return !processAlive(watcher.PID) })
+	if state := hub.service("h", "watcher").State; state != "stopped" {
+		t.Fatalf("watcher after close = %s", state)
+	}
+	if _, err := hub.run("svc", "start", "h", "watcher"); err == nil {
+		t.Fatal("start on an archived hub must fail")
+	}
+}
+
+func TestCLIDaemonRestartRestoresServices(t *testing.T) {
+	dataDirectory := t.TempDir()
+	first := startDaemonIn(t, dataDirectory)
+	first.mustRun("create", "h")
+	first.mustRun("svc", "add", "h", "watcher", "--", "sleep 30")
+	first.mustRun("svc", "add", "h", "parked", "--", "sleep 30")
+	first.mustRun("svc", "stop", "h", "parked")
+	before := first.service("h", "watcher")
+	first.stop()
+	if processAlive(before.PID) {
+		t.Fatal("daemon shutdown left the service running")
+	}
+
+	second := startDaemonIn(t, dataDirectory)
+	after := second.service("h", "watcher")
+	if after.State != "running" || after.PID == before.PID {
+		t.Fatalf("watcher after restart: %+v (before pid %d)", after, before.PID)
+	}
+	if state := second.service("h", "parked").State; state != "stopped" {
+		t.Fatalf("parked after restart = %s", state)
+	}
+	second.mustRun("svc", "rm", "h", "watcher")
+	eventually(t, "removed service exit", func() bool { return !processAlive(after.PID) })
 }

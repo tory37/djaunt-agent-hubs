@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/tory37/djaunt-agent-hubs/internal/store"
+	"github.com/tory37/djaunt-agent-hubs/internal/supervisor"
 )
 
 const (
@@ -29,6 +30,7 @@ type Server struct {
 	broker      *Broker
 	mux         *http.ServeMux
 	onHubClosed []HubClosedHook
+	supervisor  *supervisor.Supervisor
 }
 
 func New(hubStore *store.Store, webAssets http.Handler) *Server {
@@ -59,6 +61,7 @@ func (s *Server) routes(webAssets http.Handler) {
 	s.mux.HandleFunc("POST /api/hubs/{hub}/events", s.emitEvent)
 	s.mux.HandleFunc("GET /api/hubs/{hub}/stream", s.stream)
 	s.mux.HandleFunc("GET /api/hubs/{hub}/wait", s.wait)
+	s.serviceRoutes()
 	if webAssets != nil {
 		s.mux.Handle("/", webAssets)
 	}

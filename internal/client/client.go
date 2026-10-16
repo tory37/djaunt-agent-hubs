@@ -192,3 +192,21 @@ func setIfPresent(query url.Values, key, value string) {
 		query.Set(key, value)
 	}
 }
+
+// CopyText streams a plain-text response body to w until it ends or ctx is
+// canceled.
+func (c *Client) CopyText(ctx context.Context, path string, w io.Writer) error {
+	response, err := c.send(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return err
+	}
+	defer response.Body.Close()
+	if response.StatusCode >= 400 {
+		return decodeResponse(response, nil)
+	}
+	_, err = io.Copy(w, response.Body)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return err
+}
