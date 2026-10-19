@@ -38,9 +38,11 @@ function rebuildStylesheetOnViewChange(viewHost: ViteDevServer, hubsDir: string)
 
 // Views live outside the repo, so bare imports like "react" from a view
 // would not find node_modules. dedupe resolves them from the repo instead.
-export async function startViewHost(httpServer: Server, hubsDir: string): Promise<ViteDevServer> {
+// Each server gets its own cacheDir, so two servers never rewrite one dep cache.
+export async function startViewHost(httpServer: Server, hubsDir: string, cacheDir: string): Promise<ViteDevServer> {
   const viewHost = await createViteServer({
     root: WEB_ROOT,
+    cacheDir,
     configFile: false,
     appType: "spa",
     logLevel: "warn",

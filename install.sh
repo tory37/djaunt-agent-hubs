@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# Installs djt-hub's dependencies, puts a djt-hub shim in ~/.local/bin, and
-# (on macOS) runs the daemon under launchd. Safe to rerun: it restarts the daemon.
-#   ./install.sh               install + launchd
-#   ./install.sh --no-launchd  install only
+# Installs djt-hub's dependencies and puts a djt-hub shim in ~/.local/bin.
+# Nothing runs in the background: each process starts its own server with
+# `djt-hub up`. Also removes the launchd daemon that older installs set up.
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 bin_dir="${DJT_HUB_BIN_DIR:-$HOME/.local/bin}"
-use_launchd=true
-[[ "${1:-}" == "--no-launchd" ]] && use_launchd=false
+launchd_label="com.djaunt.djt-hub"
+launchd_plist="$HOME/Library/LaunchAgents/$launchd_label.plist"
 
 if ! command -v bun >/dev/null 2>&1; then
   echo "djt-hub: bun not found; install it (brew install oven-sh/bun/bun)" >&2
@@ -32,8 +31,8 @@ case ":$PATH:" in
   *) echo "note: $bin_dir is not on PATH" >&2 ;;
 esac
 
-if $use_launchd && [[ "$(uname)" == "Darwin" ]]; then
-  "$bin_dir/djt-hub" install
-elif $use_launchd; then
-  echo "launchd skipped (not macOS); run 'djt-hub serve' under your own supervisor" >&2
+if [[ "$(uname)" == "Darwin" ]] && { [[ -f "$launchd_plist" ]] || launchctl print "gui/$(id -u)/$launchd_label" >/dev/null 2>&1; }; then
+  launchctl bootout "gui/$(id -u)/$launchd_label" 2>/dev/null || true
+  rm -f "$launchd_plist"
+  echo "removed the old djt-hub launchd daemon"
 fi

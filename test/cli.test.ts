@@ -1,18 +1,17 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs, parseDuration } from "../src/cli/args.ts";
-import { startServer, type RunningServer } from "../src/server/serve.ts";
 import { makeTempDir, sleep } from "./helpers.ts";
 
 const CLI_ENTRY = join(import.meta.dir, "../src/cli/main.ts");
-const GRACE_MS = 100;
+const DEAD_PID = 2 ** 22 + 1;
 
 let tempDir: ReturnType<typeof makeTempDir>;
-let running: RunningServer;
+const upProcesses: Bun.Subprocess[] = [];
 
 function cliEnv(): Record<string, string> {
-  return { ...(process.env as Record<string, string>), DJT_HUB_ADDR: running.address, DJT_HUB_ID: "" };
+  return { ...(process.env as Record<string, string>), DJT_HUB_DATA: tempDir.path, DJT_HUB_VIEWS: "off", DJT_HUB_ID: "", DJT_HUB_ADDR: "" };
 }
 
 async function cli(...args: string[]): Promise<{ code: number; stdout: string; stderr: string; json: any }> {
@@ -31,30 +30,53 @@ async function cli(...args: string[]): Promise<{ code: number; stdout: string; s
   return { code, stdout, stderr, json };
 }
 
-async function postUserEvent(hubId: string, type: string, payload: unknown) {
-  return fetch(`http://${running.address}/api/hubs/${hubId}/events`, {
+type UpProcess = { child: Bun.Subprocess<"ignore", "pipe", "pipe">; first: any; nextLine: () => Promise<any> };
+
+// Starts `up` and reads its first line. nextLine reads each later JSON line.
+async function up(...args: string[]): Promise<UpProcess> {
+  const child = Bun.spawn(["bun", CLI_ENTRY, "up", ...args], { env: cliEnv(), stdout: "pipe", stderr: "pipe" });
+  upProcesses.push(child);
+  const reader = child.stdout.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  async function nextLine(): Promise<any> {
+    while (!buffer.includes("\n")) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`up exited: ${await new Response(child.stderr).text()}`);
+      buffer += decoder.decode(value, { stream: true });
+    }
+    const lineEnd = buffer.indexOf("\n");
+    const line = buffer.slice(0, lineEnd);
+    buffer = buffer.slice(lineEnd + 1);
+    return JSON.parse(line);
+  }
+  return { child, first: await nextLine(), nextLine };
+}
+
+async function stop(upProcess: UpProcess): Promise<void> {
+  upProcess.child.kill();
+  await upProcess.child.exited;
+}
+
+function postUserEvent(address: string, hubId: string, type: string, payload: unknown) {
+  return fetch(`http://${address}/api/hubs/${hubId}/events`, {
     method: "POST",
     headers: { "content-type": "application/json", "x-hub-source": "user" },
     body: JSON.stringify({ type, payload }),
   });
 }
 
-async function waitUntilAttached(hubId: string): Promise<void> {
-  for (let attempt = 0; attempt < 100; attempt++) {
-    const hub = await (await fetch(`http://${running.address}/api/hubs/${hubId}`)).json();
-    if (hub.attached) return;
-    await sleep(20);
-  }
-  throw new Error(`hub ${hubId} never attached`);
+function serverFile(hubId: string): string {
+  return join(tempDir.path, "hubs", hubId, "server.json");
 }
 
-beforeAll(async () => {
+beforeAll(() => {
   tempDir = makeTempDir();
-  running = await startServer({ address: "127.0.0.1:0", dataDir: tempDir.path, attachGraceMs: GRACE_MS, withViews: false });
 });
 
 afterAll(async () => {
-  await running.close();
+  for (const child of upProcesses) child.kill();
+  await Promise.all(upProcesses.map((child) => child.exited));
   tempDir.cleanup();
 });
 
@@ -73,77 +95,126 @@ describe("args", () => {
   });
 });
 
-describe("cli", () => {
-  test("create writes the view file and prints the URL", async () => {
-    const result = await cli("create", "alpha", "--title", "Alpha");
-    expect(result.code).toBe(0);
-    expect(result.json.title).toBe("Alpha");
-    expect(result.json.url).toBe(`http://${running.address}/h/alpha`);
-    expect(existsSync(result.json.view_path)).toBe(true);
+describe("up", () => {
+  test("prints the URL and view file, and records its server", async () => {
+    const alpha = await up("alpha", "--title", "Alpha", "--port", "0");
+    expect(alpha.first.hub).toBe("alpha");
+    expect(alpha.first.url).toBe(`http://${alpha.first.address}/h/alpha`);
+    expect(existsSync(alpha.first.view_path)).toBe(true);
+    expect(existsSync(serverFile("alpha"))).toBe(true);
+    expect((await cli("show", "alpha")).json.title).toBe("Alpha");
+    await stop(alpha);
   });
 
-  test("patch and get round-trip", async () => {
-    await cli("create", "beta");
+  test("other commands reach the up server", async () => {
+    const beta = await up("beta", "--port", "0");
     expect((await cli("patch", "beta", "count=3", "label=hello", 'steps=[{"id":"a"}]')).code).toBe(0);
     expect((await cli("get", "beta", "count")).json).toBe(3);
     expect((await cli("get", "beta", "steps.a.id")).json).toBe("a");
     await cli("patch", "beta", "--json", '[{"path":"label","value":null}]');
     expect((await cli("get", "beta")).json).toEqual({ count: 3, steps: [{ id: "a" }] });
+    await stop(beta);
   });
 
-  test("unknown hub fails with exit 1", async () => {
-    const result = await cli("show", "missing");
+  test("prints each user event as a JSON line, and skips agent events", async () => {
+    const gamma = await up("gamma", "--port", "0");
+    await cli("emit", "gamma", "agent.note");
+    expect((await postUserEvent(gamma.first.address, "gamma", "action", { action: "go" })).status).toBe(201);
+    const event = await gamma.nextLine();
+    expect(event.type).toBe("action");
+    expect(event.source).toBe("user");
+    await stop(gamma);
+  });
+
+  test("two hubs come up on two ports", async () => {
+    const [left, right] = await Promise.all([up("left"), up("right")]);
+    expect(left.first.address).not.toBe(right.first.address);
+    await Promise.all([stop(left), stop(right)]);
+  });
+
+  test("exits 1 when the pinned port is taken", async () => {
+    const holder = await up("holder", "--port", "0");
+    const port = holder.first.address.split(":")[1];
+    const second = await cli("up", "pinned", "--port", port);
+    expect(second.code).toBe(1);
+    await stop(holder);
+  });
+
+  test("refuses a hub that is already up", async () => {
+    const delta = await up("delta", "--port", "0");
+    const second = await cli("up", "delta", "--port", "0");
+    expect(second.code).toBe(1);
+    expect(second.stderr).toContain("already up");
+    await stop(delta);
+  });
+
+  test("stopping up takes the server down", async () => {
+    const epsilon = await up("epsilon", "--port", "0");
+    await stop(epsilon);
+    expect(existsSync(serverFile("epsilon"))).toBe(false);
+    expect(fetch(`http://${epsilon.first.address}/api/status`)).rejects.toThrow();
+    const result = await cli("get", "epsilon");
     expect(result.code).toBe(1);
-    expect(result.stderr).toContain("not found");
+    expect(result.stderr).toContain("djt-hub up epsilon");
+  });
+
+  test("close ends the up process", async () => {
+    const zeta = await up("zeta", "--port", "0");
+    expect((await cli("close", "zeta")).code).toBe(0);
+    expect(await zeta.child.exited).toBe(0);
+  });
+});
+
+describe("hub commands", () => {
+  test("a server file with a dead pid reads as not up", async () => {
+    const eta = await up("eta", "--port", "0");
+    await stop(eta);
+    writeFileSync(serverFile("eta"), JSON.stringify({ address: eta.first.address, pid: DEAD_PID }));
+    const result = await cli("patch", "eta", "a=1");
+    expect(result.code).toBe(1);
+    expect(result.stderr).toContain("is not up");
+  });
+
+  test("ls and delete work with no server, and delete refuses a hub that is up", async () => {
+    const theta = await up("theta", "--port", "0");
+    const listed = (await cli("ls")).json as { id: string; url: string | null }[];
+    expect(listed.find((hub) => hub.id === "theta")?.url).toBe(theta.first.url);
+    expect(listed.find((hub) => hub.id === "beta")?.url).toBeNull();
+    expect((await cli("delete", "theta")).code).toBe(1);
+    await stop(theta);
+    expect((await cli("delete", "theta")).json).toEqual({ deleted: "theta" });
+    expect((await cli("ls")).json.some((hub: { id: string }) => hub.id === "theta")).toBe(false);
   });
 
   test("missing hub argument is a usage error", async () => {
     expect((await cli("show")).code).toBe(64);
   });
 
-  test("listen attaches and prints user events as JSON lines", async () => {
-    await cli("create", "gamma");
-    const listener = Bun.spawn(["bun", CLI_ENTRY, "listen", "gamma"], { env: cliEnv(), stdout: "pipe" });
-    await waitUntilAttached("gamma");
-    await cli("emit", "gamma", "agent.note");
-    expect((await postUserEvent("gamma", "action", { action: "go" })).status).toBe(201);
-
-    const reader = listener.stdout.getReader();
-    const { value } = await reader.read();
-    const firstLine = new TextDecoder().decode(value).trim().split("\n")[0]!;
-    const event = JSON.parse(firstLine);
-    expect(event.type).toBe("action");
-    expect(event.source).toBe("user");
-    listener.kill();
-    await listener.exited;
+  test("help lists up and none of the daemon commands", async () => {
+    const help = (await cli("help")).stdout;
+    expect(help).toContain("up <hub>");
+    expect(help).not.toMatch(/^ {2}(serve|status|install|uninstall|listen|create)\b/m);
   });
+});
 
-  test("wait returns the matching event", async () => {
-    await cli("create", "delta");
-    const waiting = cli("wait", "delta", "--match", "step=promote", "--timeout", "5s");
-    await waitUntilAttached("delta");
-    await postUserEvent("delta", "gate.approve", { block: "run", step: "build" });
-    await postUserEvent("delta", "gate.approve", { block: "run", step: "promote" });
+describe("wait", () => {
+  test("returns the matching event", async () => {
+    const iota = await up("iota", "--port", "0");
+    const waiting = cli("wait", "iota", "--match", "step=promote", "--timeout", "5s");
+    await sleep(300);
+    await postUserEvent(iota.first.address, "iota", "gate.approve", { block: "run", step: "build" });
+    await postUserEvent(iota.first.address, "iota", "gate.approve", { block: "run", step: "promote" });
     const result = await waiting;
     expect(result.code).toBe(0);
     expect(result.json.payload.step).toBe("promote");
+    await stop(iota);
   });
 
-  test("wait exits 2 on timeout", async () => {
-    await cli("create", "epsilon");
-    const result = await cli("wait", "epsilon", "--timeout", "200ms");
+  test("exits 2 on timeout", async () => {
+    const kappa = await up("kappa", "--port", "0");
+    const result = await cli("wait", "kappa", "--timeout", "200ms");
     expect(result.code).toBe(2);
     expect(result.json).toEqual({ timeout: true });
-  });
-
-  test("listen releases the attach after it exits", async () => {
-    await cli("create", "zeta");
-    const listener = Bun.spawn(["bun", CLI_ENTRY, "listen", "zeta"], { env: cliEnv(), stdout: "pipe" });
-    await waitUntilAttached("zeta");
-    listener.kill();
-    await listener.exited;
-    await sleep(GRACE_MS * 3);
-    const hub = await (await fetch(`http://${running.address}/api/hubs/zeta`)).json();
-    expect(hub.attached).toBe(false);
+    await stop(kappa);
   });
 });

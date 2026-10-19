@@ -1,4 +1,6 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
+import { createServer as createProbeServer } from "node:net";
+import { join } from "node:path";
 import { getRequestListener } from "@hono/node-server";
 import type { ViteDevServer } from "vite";
 import { ATTACH_GRACE_MS } from "../config.ts";
@@ -13,6 +15,7 @@ export type RunningServer = { server: Server; store: HubStore; address: string; 
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1"]);
 const API_PREFIX = "/api/";
 const FS_PREFIX = "/@fs/";
+const PORT_SEARCH_LIMIT = 100;
 
 type ViteError = Error & { id?: string; frame?: string; loc?: { line: number; column: number } };
 
@@ -40,6 +43,25 @@ async function respondWithViewError(viewHost: ViteDevServer, url: string, respon
     response.statusCode = 500;
     response.end(describeViewError(error));
   }
+}
+
+function isPortFree(host: string, port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const probe = createProbeServer();
+    probe.once("error", () => resolve(false));
+    probe.listen(port, host, () => probe.close(() => resolve(true)));
+  });
+}
+
+export function isPortTaken(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException).code === "EADDRINUSE";
+}
+
+export async function findFreePort(host: string, firstPort: number): Promise<number> {
+  for (let port = firstPort; port < firstPort + PORT_SEARCH_LIMIT; port++) {
+    if (await isPortFree(host, port)) return port;
+  }
+  throw new Error(`no free port from ${firstPort} to ${firstPort + PORT_SEARCH_LIMIT - 1}`);
 }
 
 export async function startServer({
@@ -71,8 +93,16 @@ export async function startServer({
     host.middlewares(request, response, () => void respondWithViewError(host, request.url ?? "", response));
   });
 
-  if (withViews) viewHost = await startViewHost(server, store.hubsDir);
-  await new Promise<void>((resolve) => server.listen(Number(portText), host, resolve));
+  if (withViews) viewHost = await startViewHost(server, store.hubsDir, join(dataDir, "vite-cache", portText));
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(Number(portText), host, resolve);
+    });
+  } catch (error) {
+    await viewHost?.close();
+    throw error;
+  }
   const boundPort = (server.address() as { port: number }).port;
   return {
     server,

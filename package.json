@@ -6,7 +6,6 @@
     "djt-hub": "src/cli/main.ts"
   },
   "scripts": {
-    "serve": "bun src/server/main.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit"
   },

@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
 import { readFileSync } from "node:fs";
-import { daemonAddress, dataDir } from "../config.ts";
+import { dataDir, FIRST_PORT, LOOPBACK_HOST, viewsEnabled } from "../config.ts";
 import { parseMatchers, payloadMatches } from "../state/match.ts";
-import type { HubEvent } from "../store/store.ts";
+import { HubNotFoundError, HubStore, type HubEvent } from "../store/store.ts";
+import { DEFAULT_VIEW_SOURCE } from "../view-template.ts";
 import {
   flag,
   flagList,
@@ -14,7 +15,8 @@ import {
   UsageError,
   type ParsedArgs,
 } from "./args.ts";
-import { agentStream, api, ApiError, hubUrl } from "./client.ts";
+import { agentStream, api, ApiError, HubNotUpError, hubUrl } from "./client.ts";
+import { readLiveServer, removeServerFile, writeServerFile } from "./server-file.ts";
 
 const EXIT_ERROR = 1;
 const EXIT_TIMEOUT = 2;
@@ -24,18 +26,19 @@ const USER_SOURCE = "user";
 
 const USAGE = `djt-hub — live local pages that an agent builds and attaches to
 
-Daemon
-  serve                                run the daemon (launchd runs this)
-  status                               exit 0 if the daemon answers
-  install | uninstall                  run the daemon under launchd (macOS)
+Serve
+  up <hub> [--title T] [--port N] [--all]
+                                       serve the hub and attach to it. The first
+                                       line is {"hub","url","view_path","address"};
+                                       each later line is one user event. The page
+                                       goes down when this process stops.
   docs                                 print the agent guide
 
 Hubs
-  create <hub> [--title T]             new hub; prints its URL and view file
-  ls [--all]                           list hubs (--all includes closed)
+  ls [--all]                           list hubs and the URL of each one that is up
   show <hub>                           hub, state, attached, last event seq
   open <hub>                           open the hub in the browser
-  close <hub>                          close the hub; it stays readable
+  close <hub>                          close the hub; its up process exits
   delete <hub>                         remove a hub and all its files
 
 State
@@ -44,14 +47,13 @@ State
   get <hub> [path]                     print state, or one value
 
 Events
-  listen <hub> [--since N] [--all]     attach; print each user event as a JSON line
   wait <hub> [--type T] [--match k=v]... [--since N] [--timeout 30m]
                                        attach until one matching event; exit 2 on timeout
   emit <hub> <type> [json]             append an agent event
   events <hub> [--since N] [--type T]  print event history
 
 Hub resolution: --hub, then $DJT_HUB_ID, then the first argument.
-Daemon address: $DJT_HUB_ADDR (default 127.0.0.1:7717).
+Every command but up, ls, delete and docs needs the hub to be up.
 `;
 
 function print(value: unknown): void {
@@ -72,15 +74,16 @@ function sleep(milliseconds: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-type FollowOptions = { hubId: string; sinceSeq?: number; signal: AbortSignal };
+type FollowOptions = { hubId: string; sinceSeq?: number; signal: AbortSignal; address?: string };
 
-// Streams events and reconnects across daemon restarts, resuming after the
-// last seen seq. Ends when the hub closes or the signal aborts.
-async function* followEvents({ hubId, sinceSeq, signal }: FollowOptions): AsyncGenerator<HubEvent> {
+// Streams events and reconnects across dropped connections, resuming after
+// the last seen seq. Ends when the hub closes or the signal aborts, and fails
+// once the hub's up process is gone.
+async function* followEvents({ hubId, sinceSeq, signal, address }: FollowOptions): AsyncGenerator<HubEvent> {
   let lastSeenSeq = sinceSeq;
   while (!signal.aborted) {
     try {
-      for await (const frame of agentStream(hubId, lastSeenSeq, signal)) {
+      for await (const frame of agentStream(hubId, lastSeenSeq, signal, address)) {
         if (frame.event === "init" && lastSeenSeq === undefined) lastSeenSeq = frame.data.last_seq;
         if (frame.event === "hub" && frame.data.hub.closed_at !== null) return;
         if (frame.event === "event") {
@@ -90,7 +93,7 @@ async function* followEvents({ hubId, sinceSeq, signal }: FollowOptions): AsyncG
       }
     } catch (error) {
       if (signal.aborted) return;
-      if (error instanceof ApiError) throw error;
+      if (error instanceof ApiError || error instanceof HubNotUpError) throw error;
     }
     await sleep(RECONNECT_DELAY_MS);
   }
@@ -101,63 +104,117 @@ function optionalSeq(parsed: ParsedArgs): number | undefined {
   return sinceText === undefined ? undefined : Number(sinceText);
 }
 
+function hubExists(store: HubStore, hubId: string): boolean {
+  try {
+    store.getHub(hubId);
+    return true;
+  } catch (error) {
+    if (error instanceof HubNotFoundError) return false;
+    throw error;
+  }
+}
+
+async function startOnPort(port: number) {
+  const { startServer } = await import("../server/serve.ts");
+  return startServer({ address: `${LOOPBACK_HOST}:${port}`, dataDir: dataDir(), withViews: viewsEnabled() });
+}
+
+// Another up can take the probed port before this one binds it, so a taken
+// port moves the search on instead of failing.
+async function startOnFreePort() {
+  const { findFreePort, isPortTaken } = await import("../server/serve.ts");
+  let nextPort = FIRST_PORT;
+  for (;;) {
+    const port = await findFreePort(LOOPBACK_HOST, nextPort);
+    try {
+      return await startOnPort(port);
+    } catch (error) {
+      if (!isPortTaken(error)) throw error;
+      nextPort = port + 1;
+    }
+  }
+}
+
+function abortOnSignals(controller: AbortController): void {
+  process.once("SIGINT", () => controller.abort());
+  process.once("SIGTERM", () => controller.abort());
+}
+
 async function guideText(): Promise<string> {
   return readFileSync(new URL("../../docs/agent-guide.md", import.meta.url), "utf8");
 }
 
 const commands: Record<string, (args: string[]) => Promise<number | void>> = {
-  async serve() {
-    const { startServer } = await import("../server/serve.ts");
-    const running = await startServer({ address: daemonAddress(), dataDir: dataDir() });
-    console.error(`djt-hub listening on http://${running.address} (hubs in ${running.store.hubsDir})`);
-    await new Promise(() => {});
-  },
+  async up(args) {
+    const parsed = parseArgs(args, ["all"]);
+    const { hubId } = resolveHub(parsed, "up <hub> [--title T] [--port N] [--all]");
+    const liveServer = readLiveServer(hubId);
+    if (liveServer) throw new Error(`hub ${hubId} is already up at http://${liveServer.address}/h/${hubId}`);
 
-  async status() {
-    print(await api("GET", "/status"));
+    const portText = flag(parsed, "port");
+    const running = portText === undefined ? await startOnFreePort() : await startOnPort(Number(portText));
+    if (!hubExists(running.store, hubId)) running.store.createHub(hubId, flag(parsed, "title") ?? "", DEFAULT_VIEW_SOURCE);
+    writeServerFile(hubId, { address: running.address, pid: process.pid });
+    process.once("exit", () => removeServerFile(hubId));
+
+    const includeAllSources = hasFlag(parsed, "all");
+    const controller = new AbortController();
+    abortOnSignals(controller);
+    try {
+      const url = `http://${running.address}/h/${hubId}`;
+      printLine({ hub: hubId, url, view_path: running.store.viewPath(hubId), address: running.address });
+      const stream = followEvents({ hubId, sinceSeq: optionalSeq(parsed), signal: controller.signal, address: running.address });
+      for await (const event of stream) {
+        if (includeAllSources || event.source === USER_SOURCE) printLine(event);
+      }
+    } finally {
+      removeServerFile(hubId);
+      await running.close();
+    }
   },
 
   async docs() {
     process.stdout.write(await guideText());
   },
 
-  async create(args) {
-    const parsed = parseArgs(args);
-    const { hubId } = resolveHub(parsed, "create <hub> [--title T]");
-    const hub = await api("POST", "/hubs", { id: hubId, title: flag(parsed, "title") });
-    print({ ...(hub as object), url: hubUrl(hubId) });
-  },
-
   async ls(args) {
     const parsed = parseArgs(args, ["all"]);
-    print(await api("GET", hasFlag(parsed, "all") ? "/hubs?all" : "/hubs"));
+    const hubs = new HubStore(dataDir()).listHubs(hasFlag(parsed, "all"));
+    print(hubs.map((hub) => {
+      const liveServer = readLiveServer(hub.id);
+      return { ...hub, url: liveServer ? `http://${liveServer.address}/h/${hub.id}` : null };
+    }));
   },
 
   async show(args) {
     const { hubId } = resolveHub(parseArgs(args), "show <hub>");
-    print({ ...(await api<object>("GET", `/hubs/${hubId}`)), url: hubUrl(hubId) });
+    print({ ...(await api<object>(hubId, "GET", `/hubs/${hubId}`)), url: hubUrl(hubId) });
   },
 
   async open(args) {
     const { hubId } = resolveHub(parseArgs(args), "open <hub>");
-    await api("GET", `/hubs/${hubId}`);
+    await api(hubId, "GET", `/hubs/${hubId}`);
     Bun.spawn(["open", hubUrl(hubId)]);
     print({ url: hubUrl(hubId) });
   },
 
   async close(args) {
     const { hubId } = resolveHub(parseArgs(args), "close <hub>");
-    print(await api("POST", `/hubs/${hubId}/close`));
+    print(await api(hubId, "POST", `/hubs/${hubId}/close`));
   },
 
   async delete(args) {
     const { hubId } = resolveHub(parseArgs(args), "delete <hub>");
-    print(await api("DELETE", `/hubs/${hubId}`));
+    if (readLiveServer(hubId)) throw new Error(`hub ${hubId} is up; stop its up process first`);
+    const store = new HubStore(dataDir());
+    store.getHub(hubId);
+    store.deleteHub(hubId);
+    print({ deleted: hubId });
   },
 
   async get(args) {
     const { hubId, rest } = resolveHub(parseArgs(args), "get <hub> [path]");
-    const state = await api<Record<string, unknown>>("GET", `/hubs/${hubId}/state`);
+    const state = await api<Record<string, unknown>>(hubId, "GET", `/hubs/${hubId}/state`);
     const [path] = rest;
     if (!path) return print(state);
     const { getPath } = await import("../state/path.ts");
@@ -179,7 +236,7 @@ const commands: Record<string, (args: string[]) => Promise<number | void>> = {
         return { path: assignment.slice(0, separator), value: parseValue(assignment.slice(separator + 1)) };
       });
     }
-    print(await api("PATCH", `/hubs/${hubId}/state`, operations));
+    print(await api(hubId, "PATCH", `/hubs/${hubId}/state`, operations));
   },
 
   async emit(args) {
@@ -187,7 +244,7 @@ const commands: Record<string, (args: string[]) => Promise<number | void>> = {
     const [type, payloadText] = rest;
     if (!type) throw new UsageError("emit <hub> <type> [json]");
     const payload = payloadText === undefined ? {} : readJsonArgument(payloadText);
-    print(await api("POST", `/hubs/${hubId}/events`, { type, payload }));
+    print(await api(hubId, "POST", `/hubs/${hubId}/events`, { type, payload }));
   },
 
   async events(args) {
@@ -196,20 +253,7 @@ const commands: Record<string, (args: string[]) => Promise<number | void>> = {
     const query = new URLSearchParams({ since: String(optionalSeq(parsed) ?? 0) });
     const eventType = flag(parsed, "type");
     if (eventType) query.set("type", eventType);
-    print(await api("GET", `/hubs/${hubId}/events?${query}`));
-  },
-
-  async listen(args) {
-    const parsed = parseArgs(args, ["all"]);
-    const { hubId } = resolveHub(parsed, "listen <hub> [--since N] [--all]");
-    await api("GET", `/hubs/${hubId}`);
-    const includeAllSources = hasFlag(parsed, "all");
-    const controller = new AbortController();
-    process.on("SIGINT", () => controller.abort());
-    process.on("SIGTERM", () => controller.abort());
-    for await (const event of followEvents({ hubId, sinceSeq: optionalSeq(parsed), signal: controller.signal })) {
-      if (includeAllSources || event.source === USER_SOURCE) printLine(event);
-    }
+    print(await api(hubId, "GET", `/hubs/${hubId}/events?${query}`));
   },
 
   async wait(args) {
@@ -220,7 +264,7 @@ const commands: Record<string, (args: string[]) => Promise<number | void>> = {
     const matchers = parseMatchers(flagList(parsed, "match"));
     const timeoutText = flag(parsed, "timeout");
     const timeoutMs = timeoutText === undefined ? undefined : parseDuration(timeoutText);
-    await api("GET", `/hubs/${hubId}`);
+    await api(hubId, "GET", `/hubs/${hubId}`);
 
     const controller = new AbortController();
     let isTimedOut = false;
@@ -253,10 +297,6 @@ async function main(argv: string[]): Promise<number> {
   if (!commandName || commandName === "help" || commandName === "--help" || commandName === "-h") {
     process.stdout.write(USAGE);
     return commandName ? 0 : EXIT_USAGE;
-  }
-  if (commandName === "install" || commandName === "uninstall") {
-    const { runLaunchdCommand } = await import("./launchd.ts");
-    return runLaunchdCommand(commandName);
   }
   const command = commands[commandName];
   if (!command) {
