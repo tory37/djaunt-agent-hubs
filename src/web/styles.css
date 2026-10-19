@@ -76,3 +76,15 @@
     transition: none !important;
   }
 }
+
+/* uPlot ships its own legend styles; bring them onto the brand. */
+.dj-chart .u-legend {
+  font-family: var(--dj-font-mono);
+  font-size: 12px;
+  color: var(--dj-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.dj-chart .u-legend .u-marker {
+  border-radius: 0;
+}

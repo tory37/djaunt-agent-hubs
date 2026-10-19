@@ -152,7 +152,7 @@ export function Chart({ bind, data = { x: [], series: [] }, kind = "line", time 
       width: container.clientWidth,
       height,
       scales: { x: { time: time && !isCategorical } },
-      legend: { show: chartData.series.length > 1 },
+      legend: { show: chartData.series.length > 1, live: false },
       cursor: { points: { size: 6 } },
       axes: [
         { ...axis, label: xLabel, values: isCategorical ? (_, ticks) => ticks.map((tick) => String(chartData.x[tick] ?? "")) : undefined },

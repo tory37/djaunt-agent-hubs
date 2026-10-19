@@ -1,198 +1,139 @@
 # djt-hub — agent guide
 
 `djt-hub` is a local daemon at `http://127.0.0.1:7717`. It hosts live browser
-pages ("hubs") that an agent builds and the user watches and clicks. Use one
-when a task is a multi-step live process the user must follow or approve:
-releases, migrations, backfills, long test runs, incident runbooks.
+pages ("hubs") that you build and the user watches and clicks. Use one when a
+task is a multi-step live process the user must follow or approve: releases,
+migrations, backfills, long test runs, incident runbooks.
 
-- One hub per process. Hubs persist until closed; closing archives read-only.
-- The agent writes blocks and state. The page re-renders live over SSE.
-- User clicks become events. The agent reads them with `wait` or `events --follow`.
-- Services are supervised commands that keep updating the hub after the agent exits.
-- Check the daemon with `djt-hub status`. Every command prints JSON.
+- One hub per process. Each hub is a folder with one React view you write: `view.tsx`.
+- The page hot-reloads on every save of `view.tsx`, and re-renders on every state patch.
+- You **attach** by running `listen` (or `wait`). User clicks reach you only while you are attached.
+- With no agent attached, the page is read-only. It shows a banner telling the user to attach one.
+- Every command prints JSON. Check the daemon with `djt-hub status`.
 
 ## Quick start
 
 ```sh
-djt-hub create release-42 --title "Release 4.2"        # prints the URL
-djt-hub block add release-42 '{"id":"run","type":"steps","title":"Runbook","bind":"steps"}'
+djt-hub create release-42 --title "Release 4.2"   # prints url and view_path
+# edit view_path (see "Views" below), then:
 djt-hub patch release-42 --json '[{"path":"steps","value":[
   {"id":"build","label":"Build","status":"running"},
   {"id":"promote","label":"Promote","status":"waiting","gate":"Promote to prod?"}]}]'
-djt-hub open release-42                                  # tell the user too
-djt-hub wait release-42 --match block=run --match step=promote --timeout 1h
-djt-hub patch release-42 steps.promote.status=running
-djt-hub close release-42                                 # when finished
+djt-hub open release-42                           # tell the user the URL too
+djt-hub listen release-42                         # run under a background monitor
+# ...each click prints one JSON line; act on it, then patch state...
+djt-hub close release-42                          # when finished
 ```
 
-## Hub id
+## Attach
 
-Commands find the hub in this order: `--hub`, then `$DJT_HUB_ID`, then the first
-argument. Ids are lowercase slugs (`release-42`). Export `DJT_HUB_ID` to drop it.
+- `listen <hub>` attaches and prints each **user** event as one JSON line until stopped.
+  Run it in the background (a Monitor, or `run_in_background`) so clicks wake you while you work.
+  `--all` also prints agent events. `--since N` replays events after seq `N`.
+- `wait <hub> [--type T] [--match k=v]... [--timeout 30m]` attaches until one matching
+  event, prints it, and exits 0. It exits 2 on timeout. Use it for a single gate.
+  `--match` reads dotted payload keys: `--match step=promote`, `--match values.env=prod`.
+- Both reconnect across daemon restarts. The hub stays attached 60s after the last one exits,
+  so a click between two `wait` calls still reaches you.
+- When you stop listening, the page locks. That is the point: no click goes unanswered.
+- `show <hub>` reports `attached`.
+
+## Views
+
+`create` writes a starter `view.tsx` that demos the kit. Replace it with whatever the
+job needs. It must `export default` a React component. Edit it with your normal file
+tools. The open page updates in place.
+
+```tsx
+import { Grid, Panel, Steps, Stats, Actions, Log, useHub } from "djt-hub";
+
+export default function View() {
+  const { state } = useHub();
+  return (
+    <Grid>
+      <Panel eyebrow="Runbook" title="Release 4.2" width="two-thirds">
+        <Steps id="run" bind="steps" />
+      </Panel>
+      <Panel eyebrow="Health" title="Now" width="third">
+        <Stats bind="health" />
+      </Panel>
+      <Panel title="Activity" width="full">
+        <Log events="*" />
+      </Panel>
+    </Grid>
+  );
+}
+```
+
+- Import only from `"djt-hub"` and `"react"`. The view runs in the user's browser, not in Node.
+- Style with Tailwind classes. The theme tokens are `bg`, `surface`, `raised`, `line`
+  (border), `ink` (text), `muted`, `faint`, `accent`, `ok`, `warn`, `bad`, `info`;
+  fonts `font-display`, `font-body`, `font-mono`. Example: `className="text-muted font-mono"`.
+- If the view fails to compile or throws, the page shows the error and `show <hub>`
+  reports it as `view_error`. Fix the file; the page retries on its own.
+- Keep changing data in state (`patch`), not in the view source.
+
+### useHub()
+
+`const hub = useHub()` gives:
+
+- `state`, `get("a.b")`: the hub's state document.
+- `attached`, `closed`, `canAct`: `canAct` is true while an agent is attached and the hub is open.
+- `emit(type, payload)`: sends a user event to you. It returns `false` and does nothing unless `canAct`.
+- `patch(path, value)`: writes state from the page, under the same rule.
+- `events`: the last 500 hub events.
+
+Gate your own buttons on `canAct`, or use the kit `Button`, which does it for you.
+
+### Kit
+
+Every kit component takes inline props, or `bind="path"` to read the same data from state.
+
+| Component | Data | Emits |
+|---|---|---|
+| `Grid`, `Panel` | `Panel` props: `title`, `eyebrow`, `aside`, `width` (`full` `two-thirds` `half` `third` `quarter`), `flush` | |
+| `Steps id` | `items` of `{id, label, status, detail, started_at, ended_at, time, gate}` | `gate.approve` / `gate.reject` `{block, step, note?}` |
+| `Gate id prompt` | `approveLabel`, `rejectLabel`, `step` | same as above |
+| `Actions id` | `items` of `{id, label, tone, confirm, disabled}`, `hint` | `action` `{block, action}` |
+| `Form id` | `fields` of `{name, label, kind, options, value, placeholder, required}`, `submit`, `repeatable` | `form.submit` `{block, values}` |
+| `Checklist id` | `items` of `{id, label, done, note}` | `checklist.toggle` `{block, item, done}`; with `bind` it also patches `done` |
+| `Stats` | `items`: list of `{label, value, unit, tone, hint}`, or `{label: value \| {value, unit, tone, hint}}` | |
+| `Table` | `rows`, `columns`: `["name", {"key":"status","kind":"status"}, {"key":"n","kind":"number"}]` | |
+| `Chart` | `data` `{x, series:[{label, values, color}]}` or rows `[{x, a, b}]`; `kind` `line` `area` `bar`; `time`; `xLabel`, `yLabel`; `height` | |
+| `Log` | `lines` (strings or `{ts, level, text}`), or `events="deploy."` for live hub events (`"*"` for all); `max` | |
+| `Button` | `tone` `default` `primary` `danger`; disables itself while `!canAct` | your `onClick` |
+
+- Step status: `pending` `running` `waiting` `done` `failed` `skipped`. Times are unix s or ms;
+  running steps tick live. A gate shows only while its step is `waiting`.
+- Tone: `ok` `warn` `bad` `info`.
+- `id` is the `block` in every emitted payload, so you can tell controls apart.
 
 ## State and paths
 
-Each hub has one JSON state document. Blocks `bind` to a dotted path in it.
+Each hub has one JSON state document.
 
 - `patch <hub> a.b=1 c=text` sets values. Values parse as JSON, else as a string.
-- `patch <hub> --json '[{"path":"a","value":{...}}]'` sets several paths at once.
+- `patch <hub> --json '[{"path":"a","value":{...}}]'` sets several paths at once. `-` reads stdin, `@file` reads a file.
 - Inside an array, a segment is an index (`steps.0`) or an element `id` (`steps.build`).
   Give list items an `id` so you never track positions.
 - Setting `null` deletes the key or removes the array element.
-- `get <hub> [path]` reads state.
+- `get <hub> [path]` reads state. A patch is all or nothing.
 - Patches replace the value at the path. To append to a list, read it, then write it back.
-
-Prefer `bind` plus `patch` for data that changes. Inline data (`items`, `rows`,
-`text`, ...) is fine for static blocks; change it with `block set`.
-
-## Blocks
-
-`block add <hub> <json|-|@file>` appends; `block set` replaces by `id` (or
-appends); `block rm <hub> <id>` removes. Every block has:
-
-- `id` (required, slug), `type` (required), `title`
-- `width`: `full` (default) · `two-thirds` · `half` · `third` · `quarter` (12-column grid)
-- `bind`: state path for the data. Without it, the data comes from the prop in brackets below.
-- `height`: px number or CSS length, for table, chart, log, html
-
-| type | data (`bind` or prop) | notes |
-|---|---|---|
-| `markdown` | string [`text`] | headings, lists, bold, code, links |
-| `steps` | list [`items`] of `{id, label, status, detail, started_at, ended_at, time, gate}` | status: `pending` `running` `waiting` `done` `failed` `skipped`. Times are unix s or ms; running steps tick live |
-| `checklist` | list [`items`] of `{id, label, done, note}` | a click emits `checklist.toggle` and, with `bind`, patches `done` |
-| `stats` | list [`items`] of `{label, value, unit, tone, hint}`, or object `{label: value | {value, unit, tone, hint}}` | tone: `ok` `warn` `bad` `info` |
-| `table` | list [`rows`] of objects | `columns`: `["name", {"key":"status","kind":"status","label":"State","align":"right"}]`. Default is the first row's keys |
-| `chart` | [`data`] `{x:[...], series:[{label, values:[...], color}]}` or rows `[{x, a, b}]` | `kind`: `line` `area` `bar`; `time:true` reads x as unix time; `x_label`, `y_label`; string x values become categories |
-| `log` | list [`lines`] of strings or `{ts, level, text}`, or one string | `events:"deploy."` instead shows live events whose type starts with the prefix (`"*"` for all); `max` lines (500) |
-| `actions` | list [`items`] of `{id, label, tone, confirm, disabled}` | tone: `primary` `danger`; `confirm:true` or a string asks for a second click; `hint` |
-| `form` | list [`fields`] of `{name, label, kind, options, value, placeholder, required}` | kind: `text` `textarea` `number` `select` `checkbox`; `submit` label; locks after one submit unless `repeatable:true` |
-| `html` | string [`html`] | sandboxed iframe. See below |
-
-A gate is a step with `gate` set (a prompt string, or `{prompt, approve, reject}`
-for button labels). The gate shows only while that step's status is `waiting`.
-The user can add a note. After a decision, move the step out of `waiting`.
-
-### html block
-
-Use it only when no block fits. The iframe runs scripts with an opaque origin.
-It gets `window.hub`:
-
-- `hub.state`, `hub.get("a.b")`, `hub.id`, `hub.archived`
-- `hub.on("state", fn)` and `hub.on("event", fn)`. Both return an unsubscribe function.
-- `hub.emit(type, payload)` and `hub.patch(path, value)`
-- CSS variables match the page: `--bg`, `--surface`, `--text`, `--text-muted`, `--accent`, `--ok`, `--bad`, `--mono`
 
 ## Events
 
-An event is `{"seq", "hub", "source", "type", "payload", "ts"}`. `source` is
-`user`, `agent`, or `svc:<name>`. These are the events the page emits:
-
-| type | payload |
-|---|---|
-| `gate.approve` / `gate.reject` | `{block, step, note?}` |
-| `action` | `{block, action}` |
-| `form.submit` | `{block, values:{name: value}}` |
-| `checklist.toggle` | `{block, item, done}` |
-| `svc.started` / `svc.exited` / `svc.failed` | `{pid}` / `{code, duration_ms}` / `{code, duration_ms}` or `{error}`; triggers add `seq` |
-| `svc.dropped` | `{seq}`: a trigger's queue passed 100 events and dropped the oldest |
-| `agent.done` / `agent.failed` | `{seq, cost_usd, turns}` / `{seq, error}`: a daemon agent finished event `seq` |
-
-html blocks and `emit <hub> <type> [json]` can add any type.
-
-### Wait for the user
-
-- `wait <hub> [--type T] [--match k=v]... [--timeout 30m] [--since N]` blocks until
-  a matching event arrives. It prints the event and exits 0.
-- On timeout it exits 2. It considers only new events unless you pass `--since`.
-- `--type` is an exact match. To catch both gate decisions, match the payload
-  instead: `--match block=run --match step=promote`. Dotted keys work: `--match values.env=prod`.
-- `wait` starts after you write the gate, so a quick click is never missed. If you
-  need certainty, note `seq` from `show <hub>` first and pass `--since`.
-
-### Follow the stream
-
-- `events <hub> --follow` prints one JSON event per line until interrupted.
-- It reconnects across daemon restarts.
-- Run it under a background monitor to react to clicks while you work.
-- `--since N` replays missed events. `--type T` filters. `--all-kinds` adds block and state changes.
-- `events <hub>` without `--follow` prints the history.
-
-## Services
-
-The daemon runs services as `/bin/sh -c <command>` in their own process group.
-They survive the agent exiting and daemon restarts. `close` and `delete` stop them.
-
-```sh
-djt-hub svc add release-42 p99 --every 30s -- 'djt-hub patch health.p99.value=$(./p99.sh)'
-djt-hub svc add release-42 tail --restart always -- kubectl logs -f deploy/api
-djt-hub svc add release-42 nightly --cron "0 3 * * *" -- ./report.sh
-djt-hub svc ls release-42
-djt-hub svc logs release-42 tail --tail 50 --follow
-djt-hub svc stop|start|show|rm release-42 tail
-```
-
-- Put the command after `--`. One argument runs as a shell script. Several run as an argv list.
-- `--every D` runs now, then every D. `--cron` (5 fields, local time) waits for the next match.
-  A run is skipped while the last one is still going.
-- `--restart` applies to long-running services: `on-failure` (default), `always`, or `never`.
-  The delay doubles from 1s to 1m.
-- `--cwd` defaults to the current directory. `--env K=V` is repeatable.
-- Services get `$DJT_HUB_ID`, `$DJT_HUB_ADDR`, and `$DJT_SVC`. Plain `djt-hub patch` or
-  `djt-hub emit` inside a service targets its hub with source `svc:<name>`.
-- Output goes to `~/.local/share/djt-hub/logs/<hub>/<svc>.log`.
-- Scheduled runs emit `svc.failed` only on failure. Long-running services also emit
-  `svc.started` and `svc.exited`.
-
-### Triggers
-
-`--on TYPE` runs the command once per matching event instead of on a schedule.
-
-```sh
-djt-hub svc add release-42 on-reject --on gate.reject --match step=promote -- ./rollback.sh
-```
-
-- The event JSON arrives on stdin. `$DJT_EVENT_SEQ` and `$DJT_EVENT_TYPE` are set too.
-- `--match k=v` filters on the payload, the same way `wait` does.
-- Runs are one at a time, in event order. A trigger never fires on its own events.
-- `--unattached` skips events while a CLI agent is listening. See below.
-- A trigger reacts only to events after it was added or started. Events logged while the
-  daemon was down still run on the next boot.
-- A failed run emits `svc.failed` with the event `seq`.
-
-### Attached agents
-
-`wait` and `events --follow` mark the hub as attached. It stays attached for 2m after the
-last one disconnects, so a click between two `wait` calls stays yours. `show` reports
-`attached`. Browser tabs and services never attach a hub.
-
-## Daemon agents
-
-A daemon agent is Claude on call for a hub. It answers events while no session listens.
-Prefer a service or a plain `--on` trigger. Add an agent only when the event needs judgment.
-
-```sh
-djt-hub agent add release-42 oncall --on gate.approve --match step=promote \
-  --prompt "Run the promote step, then mark it done" --allow "Bash(./promote.sh)"
-djt-hub agent ls release-42
-djt-hub agent reset release-42 oncall    # forget its session
-djt-hub agent rm release-42 oncall
-```
-
-- It is an `--unattached` trigger that runs `claude -p`. Your `wait` or `follow` keeps it quiet.
-- Each run gets your `--prompt`, the event, and the hub's blocks and state. It also gets this guide.
-- It loads the workdir's project settings and `CLAUDE.md`, never your user ones or any MCP servers.
-- Default tools: `Read`, `Grep`, `Glob`, `Bash(djt-hub:*)`. `--allow TOOL` adds one, repeatable.
-- Runs resume one Claude session, so the agent remembers earlier events. `agent reset` starts fresh.
-- `--budget` caps each run in USD (default 1.00). `--timeout` kills a run (default 10m). `--model` picks the model.
-- Each run ends with `agent.done` (with cost) or `agent.failed`. Claude's reply goes to `svc logs`.
-- Hand off before you exit: add the agent, tell it what is left in `--prompt`, then stop listening.
+An event is `{"seq", "hub", "source", "type", "payload", "ts"}`. `source` is `user`
+(the page) or `agent` (you). `emit <hub> <type> [json]` adds an agent event, for
+example to feed a `Log events="deploy."`. `events <hub> [--since N] [--type T]`
+prints the history.
 
 ## Conventions
 
 - Tell the user the hub URL once, when you create it.
+- Attach before you add anything clickable, and stay attached while the user may click.
 - Keep the page the source of truth: update step status as work happens, not at the end.
-- Never treat a click as done work. A gate or action asks; the agent acts, then updates state.
-- `close` the hub when the process ends. Archived hubs stay readable at their URL.
-- `ls` lists active hubs. Reuse one rather than creating duplicates.
-- Exit codes: 0 ok, 1 error, 2 `wait` timed out, 64 usage.
-- HTTP mirrors the CLI under `/api/hubs/...`. Run `djt-hub help` for the full command list.
+- Never treat a click as done work. A gate or action asks; you act, then update state.
+- `close` the hub when the process ends. Closed hubs stay readable at their URL.
+- `ls` lists open hubs. Reuse one rather than creating duplicates.
+- Hub ids are lowercase slugs. Commands take the hub from `--hub`, then `$DJT_HUB_ID`, then the first argument.
+- Exit codes: 0 ok, 1 error, 2 `wait` timed out, 64 usage. Run `djt-hub help` for every command.

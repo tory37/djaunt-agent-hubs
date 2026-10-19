@@ -208,11 +208,10 @@ footer .links { display: flex; gap: var(--dj-space-5); }
       djt-hub
     </a>
     <nav class="nav" aria-label="Sections">
-      <a href="#blocks">Blocks</a>
       <a href="#loop">The loop</a>
+      <a href="#kit">Kit</a>
       <a href="#events">Events</a>
-      <a href="#services">Services</a>
-      <a href="#agents">Agents</a>
+      <a href="#attach">Attach</a>
       <a href="https://github.com/tory37/djaunt-agent-hubs">GitHub</a>
     </nav>
     <a class="btn btn-sm" href="#install">Install</a>
@@ -228,17 +227,17 @@ footer .links { display: flex; gap: var(--dj-space-5); }
 
     <div class="hero-grid">
       <div>
-        <p class="lede">djt-hub is a small local daemon. Your agent builds a page of steps, stats and logs. You watch it update and click the gates.</p>
-        <p class="lede">Every click comes back to the agent as an event.</p>
+        <p class="lede">djt-hub is a small local web server. Your agent writes the page as one React file, and it hot-reloads as the agent works. You watch it and click the gates.</p>
+        <p class="lede">The agent attaches with one command. Every click comes back to it as a line of JSON.</p>
         <div class="cta">
           <a class="btn btn-primary" href="#install">Install</a>
           <a class="btn" href="#loop">See the loop</a>
         </div>
         <ul class="facts">
-          <li><b>One Go binary</b>daemon, CLI, web UI</li>
+          <li><b>Bun + React</b>Vite hot-reloads the view</li>
           <li><b>127.0.0.1 only</b>no auth, no cloud</li>
           <li><b>Live over SSE</b>no polling, no refresh</li>
-          <li><b>SQLite + logs</b>survives restarts</li>
+          <li><b>Plain files</b>view, state, events</li>
         </ul>
       </div>
 
@@ -247,7 +246,7 @@ footer .links { display: flex; gap: var(--dj-space-5); }
           <span class="dot" aria-hidden="true"></span>
           <span class="id">release-42</span>
           <strong>Release 4.2</strong>
-          <span class="chip" id="chip"><i></i><span id="chip-text">oncall armed</span></span>
+          <span class="chip" id="chip"><i></i><span id="chip-text">agent attached</span></span>
         </div>
         <div class="mock-body">
           <div class="panel">
@@ -270,18 +269,50 @@ footer .links { display: flex; gap: var(--dj-space-5); }
   </div>
 </section>
 
-<section class="block" id="blocks">
+<section class="block" id="loop">
   <div class="wrap">
     <div class="head">
-      <p class="eyebrow">Ten block types</p>
-      <h2>Pick blocks. Patch state. The page redraws.</h2>
-      <p>Each block binds to a path in the hub's JSON state. Change the value and every open tab updates.</p>
+      <p class="eyebrow">The loop</p>
+      <h2>The agent writes the page. You decide. The agent acts.</h2>
+      <p>Every command prints JSON. The page is one file the agent edits. No server code, no build step.</p>
+    </div>
+
+    <div class="split">
+      <div class="term">
+        <header><span>quick start</span><button class="copy" type="button" data-copy="quick">Copy</button></header>
+<pre id="quick"><span class="p">$ </span>djt-hub create release-42 --title "Release 4.2"
+<span class="c"># the agent writes view_path: &lt;Steps id="run" bind="steps" /&gt;</span>
+<span class="p">$ </span>djt-hub patch release-42 --json '[{"path":"steps","value":[
+    {"id":"build","label":"Build","status":"running"},
+    {"id":"promote","label":"Promote","status":"waiting","gate":"Promote to prod?"}]}]'
+<span class="p">$ </span>djt-hub open release-42
+<span class="p">$ </span>djt-hub listen release-42     <span class="c"># attach; one JSON line per click</span>
+<span class="p">$ </span>djt-hub patch release-42 steps.promote.status=running
+<span class="p">$ </span>djt-hub close release-42</pre>
+      </div>
+
+      <ol class="points">
+        <li><span class="n">01</span><div><b>Create a hub, write the view</b><span>One hub per process. Its <code>view.tsx</code> hot-reloads on every save.</span></div></li>
+        <li><span class="n">02</span><div><b>Patch state</b><span>Give list items an id. Patch by id, never by position.</span></div></li>
+        <li><span class="n">03</span><div><b>Attach and listen</b><span>Each click prints as one JSON line, under a background monitor.</span></div></li>
+        <li><span class="n">04</span><div><b>Act, then update the page</b><span>A click asks. The agent does the work and moves the step on.</span></div></li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<section class="block" id="kit">
+  <div class="wrap">
+    <div class="head">
+      <p class="eyebrow">The kit</p>
+      <h2>Import a kit, or write your own JSX.</h2>
+      <p>Each component reads inline props, or binds to a path in the hub's JSON state. Patch the value and every open tab updates.</p>
     </div>
 
     <div class="bento">
       <article class="cell span-2">
         <svg class="icon"><use href="#i-steps"/></svg>
-        <h3>steps</h3>
+        <h3>Steps</h3>
         <p>Runbook steps with status, live timers and approval gates.</p>
         <ul class="mini viz" aria-hidden="true">
           <li><span>build</span><span class="ok">done</span></li>
@@ -291,17 +322,17 @@ footer .links { display: flex; gap: var(--dj-space-5); }
       </article>
       <article class="cell">
         <svg class="icon"><use href="#i-checklist"/></svg>
-        <h3>checklist</h3>
+        <h3>Checklist</h3>
         <p>Items to tick. Each toggle is an event.</p>
       </article>
       <article class="cell">
         <svg class="icon"><use href="#i-stats"/></svg>
-        <h3>stats</h3>
+        <h3>Stats</h3>
         <p>Big numbers with units and a tone: ok, warn, bad, info.</p>
       </article>
       <article class="cell span-2">
         <svg class="icon"><use href="#i-chart"/></svg>
-        <h3>chart</h3>
+        <h3>Chart</h3>
         <p>Line, area or bar. Time series or categories.</p>
         <svg class="spark viz" viewBox="0 0 200 64" preserveAspectRatio="none" aria-hidden="true">
           <line x1="0" y1="16" x2="200" y2="16"/><line x1="0" y1="32" x2="200" y2="32"/><line x1="0" y1="48" x2="200" y2="48"/>
@@ -310,66 +341,34 @@ footer .links { display: flex; gap: var(--dj-space-5); }
       </article>
       <article class="cell">
         <svg class="icon"><use href="#i-table"/></svg>
-        <h3>table</h3>
+        <h3>Table</h3>
         <p>Rows from state. Status columns render as badges.</p>
       </article>
       <article class="cell">
         <svg class="icon"><use href="#i-log"/></svg>
-        <h3>log</h3>
+        <h3>Log</h3>
         <p>Lines from state, or live events filtered by prefix.</p>
       </article>
       <article class="cell">
         <svg class="icon"><use href="#i-actions"/></svg>
-        <h3>actions</h3>
+        <h3>Actions</h3>
         <p>Buttons. Dangerous ones ask for a second click.</p>
       </article>
       <article class="cell">
         <svg class="icon"><use href="#i-form"/></svg>
-        <h3>form</h3>
+        <h3>Form</h3>
         <p>Fields that submit their values as one event.</p>
       </article>
       <article class="cell">
         <svg class="icon"><use href="#i-markdown"/></svg>
-        <h3>markdown</h3>
-        <p>Headings, lists, code and links.</p>
+        <h3>Grid + Panel</h3>
+        <p>A gapless 12-column bento. Panels take a width.</p>
       </article>
       <article class="cell">
         <svg class="icon"><use href="#i-html"/></svg>
-        <h3>html</h3>
-        <p>A sandboxed iframe, for when no block fits.</p>
+        <h3>Anything else</h3>
+        <p>It is React. <code>useHub()</code> gives you state, emit and patch.</p>
       </article>
-    </div>
-  </div>
-</section>
-
-<section class="block" id="loop">
-  <div class="wrap">
-    <div class="head">
-      <p class="eyebrow">The loop</p>
-      <h2>The agent writes the page. You decide. The agent acts.</h2>
-      <p>Everything is a CLI command that prints JSON. No SDK, no server code.</p>
-    </div>
-
-    <div class="split">
-      <div class="term">
-        <header><span>quick start</span><button class="copy" type="button" data-copy="quick">Copy</button></header>
-<pre id="quick"><span class="p">$ </span>djt-hub create release-42 --title "Release 4.2"
-<span class="p">$ </span>djt-hub block add release-42 '{"id":"run","type":"steps","title":"Runbook","bind":"steps"}'
-<span class="p">$ </span>djt-hub patch release-42 --json '[{"path":"steps","value":[
-    {"id":"build","label":"Build","status":"running"},
-    {"id":"promote","label":"Promote","status":"waiting","gate":"Promote to prod?"}]}]'
-<span class="p">$ </span>djt-hub open release-42
-<span class="p">$ </span>djt-hub wait release-42 --match block=run --match step=promote --timeout 1h
-<span class="p">$ </span>djt-hub patch release-42 steps.promote.status=running
-<span class="p">$ </span>djt-hub close release-42</pre>
-      </div>
-
-      <ol class="points">
-        <li><span class="n">01</span><div><b>Create a hub</b><span>One hub per process. It persists until closed, then archives read-only.</span></div></li>
-        <li><span class="n">02</span><div><b>Add blocks, patch state</b><span>Give list items an id. Patch by id, never by position.</span></div></li>
-        <li><span class="n">03</span><div><b>Wait for a click</b><span>The call blocks until a matching event arrives, then prints it.</span></div></li>
-        <li><span class="n">04</span><div><b>Act, then update the page</b><span>A click asks. The agent does the work and moves the step on.</span></div></li>
-      </ol>
     </div>
   </div>
 </section>
@@ -379,7 +378,7 @@ footer .links { display: flex; gap: var(--dj-space-5); }
     <div class="head">
       <p class="eyebrow">Events</p>
       <h2>Every click is an event with a seq.</h2>
-      <p>Wait for one, or follow the stream while you work. Pass a seq to replay what you missed.</p>
+      <p>Listen for all of them while you work, or wait for one. Pass a seq to replay what you missed.</p>
     </div>
 
     <div class="split flip">
@@ -389,13 +388,12 @@ footer .links { display: flex; gap: var(--dj-space-5); }
           <li><code>action</code>button press</li>
           <li><code>form.submit</code>values by field</li>
           <li><code>checklist.toggle</code>item and done</li>
-          <li><code>svc.*</code>started, exited, failed</li>
-          <li><code>agent.*</code>done with cost, or failed</li>
-          <li class="wide"><code>emit &lt;hub&gt; &lt;type&gt; [json]</code>Agents, services and html blocks can add any type.</li>
+          <li class="wide"><code>hub.emit(type, payload)</code>Your own JSX can send any type.</li>
+          <li class="wide"><code>emit &lt;hub&gt; &lt;type&gt; [json]</code>The agent can add events too, for a live log.</li>
         </ul>
       </div>
       <div class="term">
-        <header><span>djt-hub wait release-42 &hellip;</span><button class="copy" type="button" data-copy="evt">Copy</button></header>
+        <header><span>djt-hub listen release-42</span><button class="copy" type="button" data-copy="evt">Copy</button></header>
 <pre id="evt">{
   "seq": 41,
   "hub": "release-42",
@@ -409,61 +407,33 @@ footer .links { display: flex; gap: var(--dj-space-5); }
   </div>
 </section>
 
-<section class="block" id="services">
+<section class="block" id="attach">
   <div class="wrap">
     <div class="head">
-      <p class="eyebrow">Services</p>
-      <h2>The page stays live after the agent leaves.</h2>
-      <p>The daemon supervises commands in their own process groups. They survive the agent exiting and daemon restarts. Closing the hub stops them.</p>
+      <p class="eyebrow">Attach</p>
+      <h2>No agent, no clicks.</h2>
+      <p>The page only acts while an agent listens. Nothing spins up on its own, and no click lands where nobody is listening.</p>
     </div>
 
     <div class="split">
       <div class="term">
-        <header><span>supervised commands</span><button class="copy" type="button" data-copy="svc">Copy</button></header>
-<pre id="svc"><span class="c"># poll every 30s</span>
-<span class="p">$ </span>djt-hub svc add release-42 p99 --every 30s -- 'djt-hub patch health.p99.value=$(./p99.sh)'
-<span class="c"># keep a tail running</span>
-<span class="p">$ </span>djt-hub svc add release-42 tail --restart always -- kubectl logs -f deploy/api
-<span class="c"># run on a schedule</span>
-<span class="p">$ </span>djt-hub svc add release-42 nightly --cron "0 3 * * *" -- ./report.sh
-<span class="c"># react to a click</span>
-<span class="p">$ </span>djt-hub svc add release-42 on-reject --on gate.reject --match step=promote -- ./rollback.sh</pre>
+        <header><span>tag on to a hub</span><button class="copy" type="button" data-copy="attach-cmd">Copy</button></header>
+<pre id="attach-cmd"><span class="c"># stream every click, under a background monitor</span>
+<span class="p">$ </span>djt-hub listen release-42
+<span class="c"># or block on one gate</span>
+<span class="p">$ </span>djt-hub wait release-42 --match step=promote --timeout 1h
+<span class="c"># is anyone listening?</span>
+<span class="p">$ </span>djt-hub show release-42      <span class="c"># "attached": true</span></pre>
       </div>
       <ul class="points">
-        <li><span class="n">01</span><div><b>Poll, tail, schedule</b><span><code>--every</code>, <code>--restart</code> and <code>--cron</code> cover the usual jobs.</span></div></li>
-        <li><span class="n">02</span><div><b>Triggers on events</b><span>The event JSON arrives on stdin. Runs are one at a time, in order.</span></div></li>
-        <li><span class="n">03</span><div><b>Hub-aware by default</b><span>Plain <code>djt-hub patch</code> inside a service targets its own hub.</span></div></li>
-      </ul>
-    </div>
-  </div>
-</section>
-
-<section class="block" id="agents">
-  <div class="wrap">
-    <div class="head">
-      <p class="eyebrow">Daemon agents</p>
-      <h2>Claude on call, only when nobody is listening.</h2>
-      <p>If a click lands while no session waits on the hub, a daemon agent runs <code>claude -p</code> for that event. Your own session always wins.</p>
-    </div>
-
-    <div class="split">
-      <div class="term">
-        <header><span>an on-call agent</span><button class="copy" type="button" data-copy="agent">Copy</button></header>
-<pre id="agent"><span class="p">$ </span>djt-hub agent add release-42 oncall --on gate.approve --match step=promote \
-    --prompt "Run the promote step, then mark it done" \
-    --allow "Bash(./promote.sh)"
-<span class="p">$ </span>djt-hub agent ls release-42
-<span class="p">$ </span>djt-hub agent reset release-42 oncall</pre>
-      </div>
-      <ul class="points">
-        <li><span class="n">01</span><div><b>Read-only by default</b><span>Read, Grep, Glob and <code>djt-hub</code>. Widen it per agent with <code>--allow</code>.</span></div></li>
-        <li><span class="n">02</span><div><b>One resumed session</b><span>Runs never overlap. The agent remembers earlier events until you reset it.</span></div></li>
-        <li><span class="n">03</span><div><b>Every run reports cost</b><span>Each ends in <code>agent.done</code> or <code>agent.failed</code>. Budget caps a run at $1.00 unless you say otherwise.</span></div></li>
+        <li><span class="n">01</span><div><b>The page shows it</b><span>A chip in the header reads <em>agent attached</em> or <em>no agent</em>.</span></div></li>
+        <li><span class="n">02</span><div><b>Read-only when alone</b><span>With no agent, controls lock and a banner shows the <code>listen</code> command to copy.</span></div></li>
+        <li><span class="n">03</span><div><b>A short grace</b><span>The hub stays attached 60s after the last listener, so a click between two <code>wait</code> calls still lands.</span></div></li>
       </ul>
     </div>
 
     <div class="rules">
-      <p>Prefer a service or a plain <code>--on</code> trigger. Add an agent only when the event needs judgment.</p>
+      <p>The daemon never acts on a click by itself. A click asks; the attached agent acts, then updates the page.</p>
     </div>
   </div>
 </section>
@@ -472,8 +442,8 @@ footer .links { display: flex; gap: var(--dj-space-5); }
   <div class="wrap">
     <div class="head">
       <p class="eyebrow">Install</p>
-      <h2>Build it, run it under launchd, open a page.</h2>
-      <p>Needs Go. Binds to 127.0.0.1 only and keeps its data in <code>~/.local/share/djt-hub/</code>.</p>
+      <h2>Install it, run it under launchd, open a page.</h2>
+      <p>Needs Bun. Binds to 127.0.0.1 only and keeps hubs as plain files in <code>~/.local/share/djt-hub/</code>.</p>
       <div class="cta">
         <a class="btn btn-primary" href="https://github.com/tory37/djaunt-agent-hubs">View on GitHub</a>
         <a class="btn" href="https://github.com/tory37/djaunt-agent-hubs/blob/main/docs/agent-guide.md">Read the agent guide</a>
@@ -485,8 +455,8 @@ footer .links { display: flex; gap: var(--dj-space-5); }
         <header><span>macOS</span><button class="copy" type="button" data-copy="inst">Copy</button></header>
 <pre id="inst"><span class="p">$ </span>git clone https://github.com/tory37/djaunt-agent-hubs.git
 <span class="p">$ </span>cd djaunt-agent-hubs
-<span class="p">$ </span>brew install go
-<span class="p">$ </span>./install.sh        <span class="c"># build + launchd</span>
+<span class="p">$ </span>brew install oven-sh/bun/bun
+<span class="p">$ </span>./install.sh        <span class="c"># deps + launchd</span>
 <span class="p">$ </span>djt-hub status
 <span class="p">$ </span>djt-hub docs        <span class="c"># the agent guide</span>
 <span class="p">$ </span>examples/release-runbook.sh</pre>
@@ -523,9 +493,9 @@ footer .links { display: flex; gap: var(--dj-space-5); }
     { id: "verify", label: "Verify", status: "pending", meta: "" }
   ];
   var INITIAL_LOG = [
-    ["14:02:11", "svc:p99", "patch health.p99 = 142", ""],
-    ["14:02:41", "svc:p99", "patch health.p99 = 139", ""],
-    ["14:03:05", "hub", "step promote is waiting", ""]
+    ["14:02:11", "agent", "patch health.p99 = 142", "agent"],
+    ["14:02:41", "agent", "patch health.p99 = 139", "agent"],
+    ["14:03:05", "agent", "step promote is waiting", "agent"]
   ];
 
   var stepsEl = document.getElementById("steps");
@@ -621,13 +591,13 @@ footer .links { display: flex; gap: var(--dj-space-5); }
       pushLog("user", "gate.reject step=promote", "user");
       setStep("promote", "failed", "rejected");
       setStep("verify", "skipped", "");
-      setChip("oncall armed", false);
+      setChip("agent attached", false);
       return;
     }
     pushLog("user", "gate.approve step=promote", "user");
     setStep("promote", "running", "");
-    setChip("oncall running", true);
-    later(700, function () { pushLog("svc:oncall", "no session attached, waking agent", "agent"); });
+    setChip("agent acting", true);
+    later(700, function () { pushLog("agent", "listen got gate.approve", "agent"); });
     later(1800, function () { pushLog("agent", "promote.sh started", "agent"); });
     later(3200, function () {
       setStep("promote", "done", "1m 12s");
@@ -638,8 +608,8 @@ footer .links { display: flex; gap: var(--dj-space-5); }
       setStep("verify", "done", "18s");
       stats[0].value = "4.2";
       renderStats();
-      pushLog("svc:oncall", "agent.done turns=4", "agent");
-      setChip("oncall armed", false);
+      pushLog("agent", "release 4.2 done", "agent");
+      setChip("agent attached", false);
     });
   }
 
@@ -653,7 +623,7 @@ footer .links { display: flex; gap: var(--dj-space-5); }
       { label: "Errors", value: "0.02", unit: "%" }
     ];
     log = INITIAL_LOG.map(function (row) { return row.slice(); });
-    setChip("oncall armed", false);
+    setChip("agent attached", false);
     renderSteps();
     renderStats();
     renderLog();
