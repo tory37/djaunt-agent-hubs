@@ -1,14 +1,24 @@
 #!/usr/bin/env bash
 # Reference hub: a release runbook with a promote gate and live metrics. The
-# script plays the agent: it writes the view, attaches with `wait`, and acts.
+# script plays the agent: it brings the hub up, writes the view, and acts on
+# the gate. The page goes down when the script exits.
 #   examples/release-runbook.sh [hub-id]     (default release-demo; recreated)
 set -euo pipefail
 
 hub="${1:-release-demo}"
 export DJT_HUB_ID="$hub"
-djt-hub status >/dev/null
 djt-hub delete "$hub" >/dev/null 2>&1 || true
-view_path="$(djt-hub create "$hub" --title "Release 3.2.0 — web + api" | sed -n 's/.*"view_path": "\(.*\)".*/\1/p')"
+
+up_log="$(mktemp)"
+djt-hub up "$hub" --title "Release 3.2.0 — web + api" > "$up_log" &
+up_pid=$!
+trap 'kill "$up_pid" ${metrics_pid:-} 2>/dev/null || true; rm -f "$up_log"' EXIT
+until [ -s "$up_log" ]; do
+  kill -0 "$up_pid" 2>/dev/null || exit 1
+  sleep 0.1
+done
+view_path="$(head -1 "$up_log" | sed -n 's/.*"view_path":"\([^"]*\)".*/\1/p')"
+url="$(head -1 "$up_log" | sed -n 's/.*"url":"\([^"]*\)".*/\1/p')"
 
 cat > "$view_path" <<'TSX'
 import { Actions, Chart, Checklist, Grid, Log, Panel, Stats, Steps, Table, useHub } from "djt-hub";
@@ -82,12 +92,11 @@ djt-hub emit deploy.started '{"step":"canary","pct":5}' >/dev/null
   sleep 2
 done) &
 metrics_pid=$!
-trap 'kill "$metrics_pid" 2>/dev/null || true' EXIT
 
 djt-hub open >/dev/null
-echo "hub: http://${DJT_HUB_ADDR:-127.0.0.1:7717}/h/$hub — attached, waiting for the promote gate"
+echo "hub: $url — attached, waiting for the promote gate"
 
-# wait attaches the hub, so the gate unlocks while this script waits.
+# up keeps the hub attached, so the gate unlocks while this script waits.
 decision=$(djt-hub wait --match block=runbook --match step=promote --timeout 1h)
 case "$decision" in
   *gate.approve*)
@@ -107,3 +116,8 @@ case "$decision" in
     echo "rolled back"
     ;;
 esac
+
+kill "$metrics_pid" 2>/dev/null || true
+metrics_pid=
+echo "Ctrl-C takes the page down."
+wait "$up_pid"

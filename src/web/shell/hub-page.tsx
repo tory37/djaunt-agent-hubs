@@ -171,19 +171,20 @@ function HubFrame() {
       {status === "unattached" && (
         <Notice tone="warn" icon="lock">
           <p className="text-sm text-ink">
-            <span className="font-medium">Read-only.</span> <span className="text-muted">No agent is attached. Controls unlock when one listens:</span>
+            <span className="font-medium">Read-only.</span> <span className="text-muted">No agent is attached. Controls unlock when one waits on this hub:</span>
           </p>
-          <CopyCommand command={`djt-hub listen ${hub.hubId}`} />
+          <CopyCommand command={`djt-hub wait ${hub.hubId}`} />
         </Notice>
       )}
       {status === "closed" && (
         <Notice tone="muted" icon="lock">
-          <p className="text-sm">This hub is closed. It stays readable here.</p>
+          <p className="text-sm">This hub is closed.</p>
         </Notice>
       )}
       {status === "offline" && (
         <Notice tone="bad" icon="unplug">
-          <p className="text-sm">Lost the connection to the djt-hub daemon. Reconnecting.</p>
+          <p className="text-sm">The hub's up process stopped, so this page is read-only. Start it again, then open the URL it prints:</p>
+          <CopyCommand command={`djt-hub up ${hub.hubId}`} />
         </Notice>
       )}
 

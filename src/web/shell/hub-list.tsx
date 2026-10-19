@@ -54,7 +54,7 @@ export function HubList() {
           <div className="mt-6 rounded-md border border-line bg-surface p-6">
             <p className="text-sm text-muted">No hubs yet. An agent starts one with:</p>
             <div className="mt-3">
-              <CopyCommand command="djt-hub create release-42 --title 'Release 4.2'" />
+              <CopyCommand command="djt-hub up release-42 --title 'Release 4.2'" />
             </div>
           </div>
         )}

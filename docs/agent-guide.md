@@ -1,42 +1,44 @@
 # djt-hub — agent guide
 
-`djt-hub` is a local daemon at `http://127.0.0.1:7717`. It hosts live browser
-pages ("hubs") that you build and the user watches and clicks. Use one when a
-task is a multi-step live process the user must follow or approve: releases,
-migrations, backfills, long test runs, incident runbooks.
+`djt-hub` serves live browser pages ("hubs") that you build and the user watches
+and clicks. Use one when a task is a multi-step live process the user must follow
+or approve: releases, migrations, backfills, long test runs, incident runbooks.
 
+- Nothing runs in the background. You start a hub's server with `djt-hub up`, and
+  the page lives only while that process runs.
 - One hub per process. Each hub is a folder with one React view you write: `view.tsx`.
 - The page hot-reloads on every save of `view.tsx`, and re-renders on every state patch.
-- You **attach** by running `listen` (or `wait`). User clicks reach you only while you are attached.
-- With no agent attached, the page is read-only. It shows a banner telling the user to attach one.
-- Every command prints JSON. Check the daemon with `djt-hub status`.
+- `up` also attaches you: every user click prints on its stdout as one JSON line.
+- Every command prints JSON.
 
 ## Quick start
 
 ```sh
-djt-hub create release-42 --title "Release 4.2"   # prints url and view_path
+djt-hub up release-42 --title "Release 4.2"   # run under a background monitor
+# first line: {"hub","url","view_path","address"}; tell the user the url
 # edit view_path (see "Views" below), then:
 djt-hub patch release-42 --json '[{"path":"steps","value":[
   {"id":"build","label":"Build","status":"running"},
   {"id":"promote","label":"Promote","status":"waiting","gate":"Promote to prod?"}]}]'
-djt-hub open release-42                           # tell the user the URL too
-djt-hub listen release-42                         # run under a background monitor
-# ...each click prints one JSON line; act on it, then patch state...
-djt-hub close release-42                          # when finished
+djt-hub open release-42
+# ...each click prints on up's stdout; act on it, then patch state...
+djt-hub close release-42                      # when finished; up exits
 ```
 
-## Attach
+## Up and attach
 
-- `listen <hub>` attaches and prints each **user** event as one JSON line until stopped.
-  Run it in the background (a Monitor, or `run_in_background`) so clicks wake you while you work.
-  `--all` also prints agent events. `--since N` replays events after seq `N`.
-- `wait <hub> [--type T] [--match k=v]... [--timeout 30m]` attaches until one matching
-  event, prints it, and exits 0. It exits 2 on timeout. Use it for a single gate.
+- `up <hub> [--title T] [--port N] [--all]` creates the hub if it is new, or reopens it
+  with its state and history. It serves the page on the first free port from 7717.
+- Run it in the background (a Monitor, or `run_in_background`) so clicks wake you while
+  you work. The first line is the URL. Each later line is one **user** event. `--all`
+  also prints agent events.
+- Other commands (`patch`, `emit`, `get`, `wait`, ...) find the server from any shell.
+  They fail with `hub X is not up` when no `up` process runs for that hub.
+- When `up` stops, the page goes down. `close <hub>` closes the hub and ends `up`.
+- `wait <hub> [--type T] [--match k=v]... [--timeout 30m]` attaches from a second shell
+  until one matching event, prints it, and exits 0. It exits 2 on timeout.
   `--match` reads dotted payload keys: `--match step=promote`, `--match values.env=prod`.
-- Both reconnect across daemon restarts. The hub stays attached 60s after the last one exits,
-  so a click between two `wait` calls still reaches you.
-- When you stop listening, the page locks. That is the point: no click goes unanswered.
-- `show <hub>` reports `attached`.
+- `ls` and `delete` work with no server running. `ls` shows each hub's URL while it is up.
 
 ## Views
 
@@ -129,11 +131,10 @@ prints the history.
 
 ## Conventions
 
-- Tell the user the hub URL once, when you create it.
-- Attach before you add anything clickable, and stay attached while the user may click.
+- Tell the user the hub URL once, when `up` prints it.
+- Keep `up` running while the user may click. Stop it, or `close` the hub, when the process ends.
 - Keep the page the source of truth: update step status as work happens, not at the end.
 - Never treat a click as done work. A gate or action asks; you act, then update state.
-- `close` the hub when the process ends. Closed hubs stay readable at their URL.
-- `ls` lists open hubs. Reuse one rather than creating duplicates.
+- `ls` lists hubs. Reuse one with `up` rather than creating duplicates.
 - Hub ids are lowercase slugs. Commands take the hub from `--hub`, then `$DJT_HUB_ID`, then the first argument.
 - Exit codes: 0 ok, 1 error, 2 `wait` timed out, 64 usage. Run `djt-hub help` for every command.
