@@ -59,9 +59,12 @@ export async function startServer({
   const server = createServer((request, response) => {
     // Bun's node:http never emits "close" on the response when the client
     // disconnects, so a stream would never see its client go away.
-    request.socket.once("close", () => {
+    // Keep-alive sockets outlive each request, so the listener must go too.
+    const destroyOnDisconnect = () => {
       if (!response.writableEnded) response.destroy();
-    });
+    };
+    request.socket.once("close", destroyOnDisconnect);
+    response.once("finish", () => request.socket.off("close", destroyOnDisconnect));
     const isApiRequest = request.url?.startsWith(API_PREFIX) ?? false;
     if (isApiRequest || viewHost === undefined) return apiListener(request, response);
     const host = viewHost;

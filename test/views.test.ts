@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
+import type { IncomingMessage } from "node:http";
 import { startServer, type RunningServer } from "../src/server/serve.ts";
 import { makeTempDir } from "./helpers.ts";
 
@@ -64,6 +65,15 @@ describe("view host", () => {
       stylesheet = await (await fetch(url("/styles.css"))).text();
     }
     expect(stylesheet).toContain(`.${lateClass}`);
+  });
+
+  test("keeps one close listener on a reused connection", async () => {
+    const closeListenerCounts: number[] = [];
+    const recordCount = (request: IncomingMessage) => closeListenerCounts.push(request.socket.listenerCount("close"));
+    running.server.on("request", recordCount);
+    for (let request = 0; request < 15; request++) await (await fetch(url("/api/status"))).text();
+    running.server.off("request", recordCount);
+    expect(Math.max(...closeListenerCounts)).toBeLessThan(5);
   });
 
   test("API routes still answer", async () => {
