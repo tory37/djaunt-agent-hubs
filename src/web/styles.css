@@ -1,0 +1,78 @@
+@import "tailwindcss";
+@import "./brand/tokens.css";
+@import "./brand/fonts.css";
+
+/* Views live outside this folder, so Tailwind must scan them and the SDK.
+   The server swaps in the real hubs folder at load time. */
+@source "../sdk";
+@source "__DJT_HUBS_DIR__";
+
+@theme inline {
+  --color-bg: var(--dj-bg);
+  --color-surface: var(--dj-surface);
+  --color-raised: var(--dj-surface-raised);
+  --color-line: var(--dj-border);
+  --color-ink: var(--dj-text);
+  --color-muted: var(--dj-text-muted);
+  --color-faint: var(--dj-bone-500);
+  --color-accent: var(--dj-accent);
+  --color-accent-hi: var(--dj-accent-hi);
+  --color-on-accent: var(--dj-on-accent);
+  --color-ok: var(--dj-success);
+  --color-warn: var(--dj-warning);
+  --color-bad: var(--dj-danger);
+  --color-info: var(--dj-info);
+  --font-display: var(--dj-font-display);
+  --font-body: var(--dj-font-body);
+  --font-mono: var(--dj-font-mono);
+  --radius-sm: var(--dj-radius-sm);
+  --radius-md: var(--dj-radius-md);
+  --radius-lg: var(--dj-radius-lg);
+  --shadow-glow: var(--dj-glow);
+  --ease-dj: var(--dj-ease);
+  --tracking-label: var(--dj-tracking-label);
+  --text-title: clamp(1.25rem, 1rem + 1vw, 1.75rem);
+}
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+  body {
+    background: var(--dj-bg);
+    color: var(--dj-text);
+    font-family: var(--dj-font-body);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  :focus-visible {
+    outline: 1px solid var(--dj-accent);
+    outline-offset: 2px;
+  }
+}
+
+@keyframes dj-sweep {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(300%); }
+}
+
+@keyframes dj-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+@utility animate-sweep {
+  animation: dj-sweep 1.6s var(--dj-ease) infinite;
+}
+
+@utility animate-beat {
+  animation: dj-pulse 1.8s var(--dj-ease) infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

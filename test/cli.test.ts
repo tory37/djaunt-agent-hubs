@@ -50,7 +50,7 @@ async function waitUntilAttached(hubId: string): Promise<void> {
 
 beforeAll(async () => {
   tempDir = makeTempDir();
-  running = await startServer({ address: "127.0.0.1:0", dataDir: tempDir.path, attachGraceMs: GRACE_MS });
+  running = await startServer({ address: "127.0.0.1:0", dataDir: tempDir.path, attachGraceMs: GRACE_MS, withViews: false });
 });
 
 afterAll(async () => {

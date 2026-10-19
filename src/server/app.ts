@@ -40,12 +40,17 @@ export function createApp({ store, attachGraceMs = ATTACH_GRACE_MS, version = "d
 
   app.onError((error, context) => context.json({ error: error.message }, errorStatus(error)));
 
+  // The page reports compile and runtime errors in view.tsx, so an agent can
+  // see them in `show` without a browser.
+  const viewErrorByHub = new Map<string, string>();
+
   function describeHub(hubId: string) {
     return {
       ...store.getHub(hubId),
       attached: attach.isAttached(hubId),
       last_seq: store.lastSeq(hubId),
       view_path: store.viewPath(hubId),
+      view_error: viewErrorByHub.get(hubId) ?? null,
     };
   }
 
@@ -87,6 +92,15 @@ export function createApp({ store, attachGraceMs = ATTACH_GRACE_MS, version = "d
     const hub = store.closeHub(hubId);
     broker.publish(hubId, { kind: "hub", hub });
     return context.json(describeHub(hubId));
+  });
+
+  app.put("/hubs/:hub/view-error", async (context) => {
+    const hubId = context.req.param("hub");
+    store.getHub(hubId);
+    const body = await context.req.json<{ error: string | null }>();
+    if (body.error) viewErrorByHub.set(hubId, body.error);
+    else viewErrorByHub.delete(hubId);
+    return context.json({ ok: true });
   });
 
   app.get("/hubs/:hub/state", (context) =>
