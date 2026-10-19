@@ -49,6 +49,23 @@ describe("view host", () => {
     expect(await response.text()).toContain("view.tsx");
   });
 
+  test("rebuilds the stylesheet with classes from a hub created after it compiled", async () => {
+    await fetch(url("/styles.css"));
+    await fetch(url("/api/hubs"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "late-hub" }),
+    });
+    const lateClass = ["mt", "97"].join("-");
+    writeFileSync(running.store.viewPath("late-hub"), `export default function View() { return <div className="${lateClass}" />; }\n`);
+    let stylesheet = "";
+    for (let attempt = 0; attempt < 50 && !stylesheet.includes(`.${lateClass}`); attempt++) {
+      await Bun.sleep(100);
+      stylesheet = await (await fetch(url("/styles.css"))).text();
+    }
+    expect(stylesheet).toContain(`.${lateClass}`);
+  });
+
   test("API routes still answer", async () => {
     const response = await fetch(url("/api/status"));
     expect((await response.json()).ok).toBe(true);
