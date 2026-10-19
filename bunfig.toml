@@ -1,0 +1,4 @@
+[install]
+exact = true
+# Org rule: no external dependency released less than 7 days ago.
+minimumReleaseAge = 604800

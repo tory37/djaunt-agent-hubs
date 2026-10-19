@@ -3,3 +3,4 @@
 *.db
 *.db-*
 .agents/
+/node_modules/
