@@ -16,6 +16,7 @@ import {
   type ParsedArgs,
 } from "./args.ts";
 import { agentStream, api, ApiError, HubNotUpError, hubUrl } from "./client.ts";
+import { lanAddresses } from "../server/lan.ts";
 import { readLiveServer, removeServerFile, writeServerFile } from "./server-file.ts";
 
 const EXIT_ERROR = 1;
@@ -27,11 +28,13 @@ const USER_SOURCE = "user";
 const USAGE = `djt-hub — live local pages that an agent builds and attaches to
 
 Serve
-  up <hub> [--title T] [--port N] [--all]
+  up <hub> [--title T] [--port N] [--all] [--lan]
                                        serve the hub and attach to it. The first
                                        line is {"hub","url","view_path","address"};
                                        each later line is one user event. The page
                                        goes down when this process stops.
+                                       --lan also serves private-network machines
+                                       and adds "lan_urls"; public peers are dropped.
   docs                                 print the agent guide
 
 Hubs
@@ -114,20 +117,20 @@ function hubExists(store: HubStore, hubId: string): boolean {
   }
 }
 
-async function startOnPort(port: number) {
+async function startOnPort(port: number, lan: boolean) {
   const { startServer } = await import("../server/serve.ts");
-  return startServer({ address: `${LOOPBACK_HOST}:${port}`, dataDir: dataDir(), withViews: viewsEnabled() });
+  return startServer({ address: `${LOOPBACK_HOST}:${port}`, dataDir: dataDir(), withViews: viewsEnabled(), lan });
 }
 
 // Another up can take the probed port before this one binds it, so a taken
 // port moves the search on instead of failing.
-async function startOnFreePort() {
+async function startOnFreePort(lan: boolean) {
   const { findFreePort, isPortTaken } = await import("../server/serve.ts");
   let nextPort = FIRST_PORT;
   for (;;) {
-    const port = await findFreePort(LOOPBACK_HOST, nextPort);
+    const port = await findFreePort(LOOPBACK_HOST, nextPort, lan);
     try {
-      return await startOnPort(port);
+      return await startOnPort(port, lan);
     } catch (error) {
       if (!isPortTaken(error)) throw error;
       nextPort = port + 1;
@@ -146,13 +149,14 @@ async function guideText(): Promise<string> {
 
 const commands: Record<string, (args: string[]) => Promise<number | void>> = {
   async up(args) {
-    const parsed = parseArgs(args, ["all"]);
-    const { hubId } = resolveHub(parsed, "up <hub> [--title T] [--port N] [--all]");
+    const parsed = parseArgs(args, ["all", "lan"]);
+    const { hubId } = resolveHub(parsed, "up <hub> [--title T] [--port N] [--all] [--lan]");
     const liveServer = readLiveServer(hubId);
     if (liveServer) throw new Error(`hub ${hubId} is already up at http://${liveServer.address}/h/${hubId}`);
 
     const portText = flag(parsed, "port");
-    const running = portText === undefined ? await startOnFreePort() : await startOnPort(Number(portText));
+    const lan = hasFlag(parsed, "lan");
+    const running = portText === undefined ? await startOnFreePort(lan) : await startOnPort(Number(portText), lan);
     if (!hubExists(running.store, hubId)) running.store.createHub(hubId, flag(parsed, "title") ?? "", DEFAULT_VIEW_SOURCE);
     writeServerFile(hubId, { address: running.address, pid: process.pid });
     process.once("exit", () => removeServerFile(hubId));
@@ -162,7 +166,9 @@ const commands: Record<string, (args: string[]) => Promise<number | void>> = {
     abortOnSignals(controller);
     try {
       const url = `http://${running.address}/h/${hubId}`;
-      printLine({ hub: hubId, url, view_path: running.store.viewPath(hubId), address: running.address });
+      const port = running.address.split(":")[1];
+      const lanUrls = lan ? lanAddresses().map((ip) => `http://${ip}:${port}/h/${hubId}`) : undefined;
+      printLine({ hub: hubId, url, view_path: running.store.viewPath(hubId), address: running.address, lan_urls: lanUrls });
       const stream = followEvents({ hubId, sinceSeq: optionalSeq(parsed), signal: controller.signal, address: running.address });
       for await (const event of stream) {
         if (includeAllSources || event.source === USER_SOURCE) printLine(event);
