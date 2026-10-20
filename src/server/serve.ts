@@ -6,7 +6,8 @@ import type { ViteDevServer } from "vite";
 import { ATTACH_GRACE_MS } from "../config.ts";
 import { HubStore } from "../store/store.ts";
 import { createApp } from "./app.ts";
-import { isLocalNetworkAddress } from "./lan.ts";
+import { createAuthGuard } from "./auth.ts";
+import { isLocalNetworkAddress, isLoopbackAddress } from "./lan.ts";
 import { startViewHost } from "./views.ts";
 
 export type ServeOptions = {
@@ -15,6 +16,7 @@ export type ServeOptions = {
   attachGraceMs?: number;
   withViews?: boolean;
   lan?: boolean;
+  password?: string;
 };
 
 export type RunningServer = { server: Server; store: HubStore; address: string; close: () => Promise<void> };
@@ -78,6 +80,7 @@ export async function startServer({
   attachGraceMs = ATTACH_GRACE_MS,
   withViews = true,
   lan = false,
+  password,
 }: ServeOptions): Promise<RunningServer> {
   const [host = "", portText = ""] = address.split(":");
   if (!LOOPBACK_HOSTS.has(host)) throw new Error(`address ${address} must be loopback; hubs are local-only`);
@@ -85,6 +88,12 @@ export async function startServer({
   const store = new HubStore(dataDir);
   const { app } = createApp({ store, attachGraceMs });
   const apiListener = getRequestListener(app.fetch);
+  // The machine itself is trusted, so the CLI needs no login; only network peers do.
+  const authGuard = lan && password ? createAuthGuard(password) : undefined;
+  const needsLogin = (request: { socket: { remoteAddress?: string }; headers: { cookie?: string } }) =>
+    authGuard !== undefined &&
+    !isLoopbackAddress(request.socket.remoteAddress) &&
+    !authGuard.isAuthorized(request as Parameters<typeof authGuard.isAuthorized>[0]);
   let viewHost: ViteDevServer | undefined;
 
   const server = createServer((request, response) => {
@@ -96,6 +105,7 @@ export async function startServer({
     };
     request.socket.once("close", destroyOnDisconnect);
     response.once("finish", () => request.socket.off("close", destroyOnDisconnect));
+    if (authGuard !== undefined && needsLogin(request)) return authGuard.respondUnauthorized(request, response);
     const isApiRequest = request.url?.startsWith(API_PREFIX) ?? false;
     if (isApiRequest || viewHost === undefined) return apiListener(request, response);
     const host = viewHost;
@@ -108,6 +118,10 @@ export async function startServer({
       if (!isLocalNetworkAddress(socket.remoteAddress)) socket.destroy();
     });
   }
+
+  server.prependListener("upgrade", (request, socket) => {
+    if (needsLogin(request)) socket.destroy();
+  });
 
   if (withViews) viewHost = await startViewHost(server, store.hubsDir, join(dataDir, "vite-cache", portText));
   try {

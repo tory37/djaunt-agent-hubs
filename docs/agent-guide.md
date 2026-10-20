@@ -29,6 +29,12 @@ djt-hub close release-42                      # when finished; up exits
 
 - `up <hub> [--title T] [--port N] [--all]` creates the hub if it is new, or reopens it
   with its state and history. It serves the page on the first free port from 7717.
+- **Ask before the first `up` of a session:** "Expose this on your local network? If so, add a
+  password?" Default is neither. Plain `up` serves this machine only. `up --lan` also serves
+  private-network machines (10.x, 172.16-31.x, 192.168.x); public peers are dropped.
+  `up --lan --password P` (or `$DJT_HUB_PASSWORD`) makes network visitors log in. This
+  machine never logs in. Use a random password, tell the user once, and never log it.
+  The first line adds `lan_urls` and `login_required`. Give the user the `lan_urls`.
 - Run it in the background (a Monitor, or `run_in_background`) so clicks wake you while
   you work. The first line is the URL. Each later line is one **user** event. `--all`
   also prints agent events.

@@ -30,6 +30,12 @@ export function isLocalNetworkAddress(address: string | undefined): boolean {
   return bare.includes(":") ? isPrivateIpv6(bare) : isPrivateIpv4(bare);
 }
 
+export function isLoopbackAddress(address: string | undefined): boolean {
+  if (address === undefined) return false;
+  const bare = stripMappedPrefix(address);
+  return bare === "::1" || bare.startsWith("127.");
+}
+
 export function lanAddresses(): string[] {
   return Object.values(networkInterfaces())
     .flatMap((entries) => entries ?? [])
