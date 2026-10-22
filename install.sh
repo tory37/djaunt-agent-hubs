@@ -10,7 +10,8 @@ launchd_label="com.djaunt.djt-hub"
 launchd_plist="$HOME/Library/LaunchAgents/$launchd_label.plist"
 
 if ! command -v bun >/dev/null 2>&1; then
-  echo "djt-hub: bun not found; install it (brew install oven-sh/bun/bun)" >&2
+  echo "djt-hub: bun not found; install it (brew install oven-sh/bun/bun, or curl -fsSL https://bun.sh/install | bash)" >&2
+  echo "djt-hub: do not use plain 'brew install bun'; on older macOS it compiles LLVM from source" >&2
   exit 1
 fi
 bun_path="$(command -v bun)"

@@ -20,6 +20,11 @@ The page goes down when that process stops.
 Needs Bun (`brew install oven-sh/bun/bun`). Rerun `install.sh` after pulling to
 upgrade. It also removes the launchd daemon that older versions installed.
 
+Use that tap, not homebrew-core's `brew install bun`: on macOS versions Homebrew
+no longer supports, core has no bottle for `bun`'s dependencies and compiles them
+from source, including LLVM, which takes hours. If brew is stuck building, stop it
+and install Bun with `curl -fsSL https://bun.sh/install | bash` instead.
+
 ## Use
 
 ```sh
